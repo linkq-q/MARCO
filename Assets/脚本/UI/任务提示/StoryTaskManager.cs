@@ -80,13 +80,13 @@ public class StoryTaskManager : MonoBehaviour
     public void NotifyEnterStage2()
     {
         // 阶段1 -> 阶段2 同步推进（任务5->6）
-        if (stage == Stage.Stage1 && taskIndex == 5)
-        {
-            stage = Stage.Stage2;
-            taskIndex = 6;
-            FireStageChanged();
-            FireTaskChanged();
-        }
+        // 放宽条件：只要还没到任务6，就直接推进，避免taskIndex未到5时漏触发
+        if (taskIndex >= 6) return;
+        stage = Stage.Stage2;
+        taskIndex = 6;
+        EnterTask(taskIndex);
+        FireStageChanged();
+        FireTaskChanged();
     }
     public void EnterTask(int taskIndex)
     {

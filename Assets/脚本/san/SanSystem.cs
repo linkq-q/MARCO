@@ -309,7 +309,10 @@ public class SanSystem : MonoBehaviour
         if (consideredProgress)
         {
             NotifyProgress();
-            RegisterValidInteraction(); // ✅ 你要的“每累计三次有效交互行为解锁引导句”
+            RegisterValidInteraction(); // ✅ 你要的”每累计三次有效交互行为解锁引导句”
+
+            if (dr.advance == 1)
+                takeover?.NotifyAdvancePulse();
         }
 
         // 3) 负向/无意义行为：不推进（让衰减继续发生）

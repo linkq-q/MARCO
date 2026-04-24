@@ -5,7 +5,7 @@ public class EndingManager : MonoBehaviour
 {
     public static EndingManager I { get; private set; }
 
-    public enum EndingType { None, Lost, AITakeover, Awake }
+    public enum EndingType { None, Lost, AITakeover, Awake, Destruction }
 
     public AITakeoverEndingFlow takeoverFlow;
 
@@ -16,6 +16,9 @@ public class EndingManager : MonoBehaviour
     public FixedEndingPlayer fixedPlayer;
     public FixedEndingAsset lostAsset;
     public FixedEndingAsset awakeAsset;
+
+    [Header("Ending 4 (Destruction)")]
+    public FixedEndingAsset destructionAsset;
 
     [Header("Ending 2 (already done)")]
     public EndingUIBinder takeoverUIBinder;
@@ -93,6 +96,23 @@ public class EndingManager : MonoBehaviour
         }
 
         takeoverUIBinder.PlayTakeoverEnding();
+    }
+
+    // ========== 结局4：销毁（ECHO-03/07达到100%） ==========
+    public void TriggerDestructionEnding()
+    {
+        if (Current != EndingType.None) return;
+        Current = EndingType.Destruction;
+
+        EnterEndingMode();
+
+        if (!fixedPlayer || !destructionAsset)
+        {
+            Debug.LogError("[EndingManager] fixedPlayer 或 destructionAsset 未绑定。");
+            return;
+        }
+
+        fixedPlayer.Play(destructionAsset);
     }
 
     // ========== 结局3：醒来（固定文本结局，若你仍保留这个接口） ==========

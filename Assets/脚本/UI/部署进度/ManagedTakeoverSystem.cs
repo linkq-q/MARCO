@@ -23,7 +23,7 @@ public class ManagedTakeoverSystem : MonoBehaviour
     public float maxProgress = 100f;
 
     [Header("Rates (per second)")]
-    public float rateNormal = 0.2f;     // 白
+    public float rateNormal = 0.05f;    // 白
     public float rateGuide = 0.1f;      // 绿（引导行为）
     public float rateNo30 = 0.25f;      // 橙（30s无推进）
     public float rateNo60 = 0.45f;      // 红（60s无推进）
@@ -39,6 +39,10 @@ public class ManagedTakeoverSystem : MonoBehaviour
 
 
 
+    [Header("Advance Pulse")]
+    public float advancePulseRate = 0.10f;
+    public float advancePulseDuration = 3f;
+
     [Header("Freeze")]
     public float linkFreezeSeconds = 20f;
 
@@ -50,6 +54,7 @@ public class ManagedTakeoverSystem : MonoBehaviour
     public float FreezeTimer { get; private set; } // seconds
 
     float _guideTimer;
+    float _pulseTimer;
 
     /// <summary>进度变化事件：progress(0..100)</summary>
     public event Action<float> OnProgressChanged;
@@ -86,6 +91,13 @@ public class ManagedTakeoverSystem : MonoBehaviour
             if (_guideTimer < 0f) _guideTimer = 0f;
         }
 
+        // advance脉冲计时
+        if (_pulseTimer > 0f)
+        {
+            _pulseTimer -= dt;
+            if (_pulseTimer < 0f) _pulseTimer = 0f;
+        }
+
         // 无推进计时（只要你不调用 NotifyProgress/NotifyGuideAction 就会一直涨）
         NoProgressTimer += dt;
 
@@ -107,6 +119,7 @@ public class ManagedTakeoverSystem : MonoBehaviour
         NoProgressTimer = 0f;
         FreezeTimer = 0f;
         _guideTimer = 0f;
+        _pulseTimer = 0f;
         _takeoverEndingTriggered = false;
 
         FireProgressChanged();
@@ -114,6 +127,17 @@ public class ManagedTakeoverSystem : MonoBehaviour
 
         if (logDebug)
             Debug.Log($"[Takeover] ResetForStage2 -> progress={Progress:F1} rate={GetCurrentRate():F2}");
+    }
+
+    // ===================== 对外：advance脉冲 =====================
+
+    /// <summary>
+    /// AI判定 advance==1 时调用：触发+0.10%/s 持续3秒的额外速率脉冲
+    /// </summary>
+    public void NotifyAdvancePulse()
+    {
+        _pulseTimer = advancePulseDuration;
+        if (logDebug) Debug.Log($"[Takeover] AdvancePulse start: +{advancePulseRate}/s for {advancePulseDuration}s");
     }
 
     // ===================== 对外：推进/引导行为 =====================
@@ -208,12 +232,13 @@ public class ManagedTakeoverSystem : MonoBehaviour
     {
         if (FreezeTimer > 0f) return 0f;
 
-        if (_guideTimer > 0f) return rateGuide;
+        float baseRate;
+        if (_guideTimer > 0f) baseRate = rateGuide;
+        else if (NoProgressTimer >= noProgress60) baseRate = rateNo60;
+        else if (NoProgressTimer >= noProgress30) baseRate = rateNo30;
+        else baseRate = rateNormal;
 
-        if (NoProgressTimer >= noProgress60) return rateNo60;
-        if (NoProgressTimer >= noProgress30) return rateNo30;
-
-        return rateNormal;
+        return baseRate + (_pulseTimer > 0f ? advancePulseRate : 0f);
     }
 
     public string GetCurrentRateColorKey()
