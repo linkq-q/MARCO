@@ -242,9 +242,6 @@ public class StoryTaskManager : MonoBehaviour
     void EnsureHintManager()
     {
         if (UIHintManager.I != null) return;
-
-        var go = new GameObject("UIHintManager");
-        var mgr = go.AddComponent<UIHintManager>();
-        mgr.storyTaskManager = this;
+        Debug.LogWarning("[StoryTaskManager] UIHintManager not found in scene. 请在 Hierarchy 的 UI/拾取提示/ 下放置 UIHintManager 并赋值三个 CanvasGroup 引用。", this);
     }
 }

@@ -58,6 +58,9 @@ public class AIBroker : MonoBehaviour
         "连线", "记忆", "帮你回忆", "串起来", "找到联系", "线索", "拼起来"
     };
 
+    [Header("Stage2 Link Bridge")]
+    public Stage2LinkModeBridge linkBridge;
+
 
     int _turnId = 0;
 
@@ -457,6 +460,9 @@ public class AIBroker : MonoBehaviour
             bottomChat.ShowAI(line);
             storyTaskManager?.RegisterAIDialogue(line);
 
+            // ✅ Stage2-S2：Echo回复含关键词时触发连线面板
+            TryTriggerLinkByKeyword(line);
+
             Debug.Log($"[JudgeDBG] isAuto={isAutoTalk} cloudJudge={(cloudJudge ? "OK" : "NULL")} runState={(EchoRunState.I ? "OK" : "NULL")}");
 
             // 只对玩家输入（isAutoTalk=false）做判定
@@ -645,6 +651,28 @@ public class AIBroker : MonoBehaviour
         }
     }
 
+
+    void TryTriggerLinkByKeyword(string echoLine)
+    {
+        if (!triggerStage2LinkByReplyKeywords) return;
+        if (linkBridge == null) return;
+        if (string.IsNullOrWhiteSpace(echoLine)) return;
+
+        var rs = EchoRunState.I;
+        EchoStage curStage = rs != null ? rs.stage : stage;
+        int curSub = rs != null ? rs.subState : subState;
+
+        if (curStage != EchoStage.Stage2_Rift || curSub != 2) return;
+
+        foreach (var kw in stage2LinkKeywords)
+        {
+            if (!string.IsNullOrWhiteSpace(kw) && echoLine.Contains(kw))
+            {
+                linkBridge.TryTriggerNextScenarioFromDialogue();
+                return;
+            }
+        }
+    }
 
     public string GetLastAI() => _lastAILine;
 

@@ -190,11 +190,10 @@ public class Stage2LinkDrawScheduler : MonoBehaviour
 
         if (logDebug) Debug.Log($"[Stage2LinkDrawScheduler] Trigger scenario: {scenario.name}", this);
 
-        // 打开面板 + 应用 scenario
-        OpenBoardPanel();
-
+        // ✅ 先设置 scenario + 重置，再打开面板，确保面板显示内容与数据索引一致
         board.SetScenario(scenario);
         board.ResetPuzzle();
+        OpenBoardPanel();
 
         // 等面板关闭（你的 MemoryBoardController 成功后会 SetActive(false) 时，这里就会继续）
         yield return WaitUntilBoardClosed();

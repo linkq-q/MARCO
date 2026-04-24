@@ -1,56 +1,42 @@
 using System.Collections;
 using System.Collections.Generic;
-using TMPro;
 using UnityEngine;
 
 public class UIHintManager : MonoBehaviour
 {
     public static UIHintManager I { get; private set; }
 
-    [Header("Refs")]
-    public CanvasGroup hintGroup;
-    public TextMeshProUGUI hintText;
-    public Animator breathAnimator;
-    public StoryTaskManager storyTaskManager;
+    [Header("Fixed Hint GameObjects (Inspector拖拽赋值 → UI/拾取提示/)")]
+    public CanvasGroup hintGroup_TAB;       // HintText_TAB
+    public CanvasGroup hintGroup_Interact;  // HintText_Interact
+    public CanvasGroup hintGroup_Space;     // HintText_Space
 
-    [Header("Preset Hints")]
-    public string task4Hint = "TAB 查看面板";
+    [Header("Timing")]
     public float task4HintDelay = 1f;
-    public string highlightHint = "靠近高亮物体 E 获取线索";
-    public string wakeDialogueHint = "空格 唤醒对话";
     public float wakeDialogueHintDelay = 3f;
 
     [Header("Visual")]
     public float fadeSeconds = 0.2f;
-    public float fallbackMinAlpha = 0.3f;
-    public float fallbackMaxAlpha = 1.0f;
-    public float fallbackBreathPeriod = 2f;
+
+    [Header("Refs")]
+    public StoryTaskManager storyTaskManager;
 
     readonly HashSet<string> _shownIds = new HashSet<string>();
-    Coroutine _showCo;
-    Coroutine _fadeCo;
-    KeyCode _dismissKey;
-    bool _visible;
-    float _fallbackBreathTime;
+    Coroutine _coTAB, _coInteract, _coSpace;
 
     void Awake()
     {
         if (I != null && I != this) { Destroy(gameObject); return; }
         I = this;
-
-        EnsureRuntimeUi();
-        HideImmediate();
+        HideAllImmediate();
     }
 
-    void OnEnable()
-    {
-        BindStoryTaskManager();
-    }
+    void OnEnable() => BindStoryTaskManager();
 
     void Start()
     {
         BindStoryTaskManager();
-        ShowHintOnce("wake_dialogue", wakeDialogueHint, KeyCode.Space, wakeDialogueHintDelay);
+        ShowSpaceOnce("wake_dialogue", wakeDialogueHintDelay);
     }
 
     void OnDisable()
@@ -61,198 +47,151 @@ public class UIHintManager : MonoBehaviour
 
     void Update()
     {
-        if (_visible && Input.GetKeyDown(_dismissKey))
-            HideHint();
-
-        if (_visible && breathAnimator == null && hintGroup != null)
-        {
-            _fallbackBreathTime += Time.unscaledDeltaTime;
-            float period = Mathf.Max(0.01f, fallbackBreathPeriod);
-            float t = Mathf.PingPong(_fallbackBreathTime, period * 0.5f) / (period * 0.5f);
-            hintGroup.alpha = Mathf.Lerp(fallbackMinAlpha, fallbackMaxAlpha, t);
-        }
+        TryDismiss(hintGroup_TAB, ref _coTAB, KeyCode.Tab);
+        TryDismiss(hintGroup_Interact, ref _coInteract, KeyCode.E);
+        TryDismiss(hintGroup_Space, ref _coSpace, KeyCode.Space);
     }
 
-    public void ShowHint(string text, KeyCode dismissKey, float delay = 0f)
-    {
-        ShowHintInternal(text, dismissKey, delay);
-    }
-
-    public void ShowHintOnce(string id, string text, KeyCode dismissKey, float delay = 0f)
-    {
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            ShowHintInternal(text, dismissKey, delay);
-            return;
-        }
-
-        if (_shownIds.Contains(id)) return;
-        _shownIds.Add(id);
-        ShowHintInternal(text, dismissKey, delay);
-    }
+    // ========================
+    // 外部调用接口
+    // ========================
 
     public void NotifyFirstHighlightEntered()
     {
-        ShowHintOnce("highlight_interact", highlightHint, KeyCode.E, 0f);
+        ShowInteractOnce("highlight_interact", 0f);
     }
 
     public void HideHint()
     {
-        if (_fadeCo != null)
-            StopCoroutine(_fadeCo);
-
-        _fadeCo = StartCoroutine(CoFadeOut());
+        StartFadeOut(hintGroup_TAB, ref _coTAB);
+        StartFadeOut(hintGroup_Interact, ref _coInteract);
+        StartFadeOut(hintGroup_Space, ref _coSpace);
     }
+
+    // 向下兼容旧签名（text 参数已忽略，由 id 决定显示哪个 GO）
+    public void ShowHint(string text, KeyCode dismissKey, float delay = 0f)
+    {
+        ShowInteractOnce("hint_generic_" + text.GetHashCode(), delay);
+    }
+
+    public void ShowHintOnce(string id, string text, KeyCode dismissKey, float delay = 0f)
+    {
+        if (id == "task4_panel")
+            ShowTABOnce(id, delay);
+        else if (id == "highlight_interact")
+            ShowInteractOnce(id, delay);
+        else if (id == "wake_dialogue")
+            ShowSpaceOnce(id, delay);
+        else
+            ShowInteractOnce(id, delay); // 自定义 id 默认路由到 Interact 提示
+    }
+
+    // ========================
+    // 内部：按类型显示一次
+    // ========================
 
     void OnTaskEntered(int taskIndex)
     {
         if (taskIndex == 4)
-            ShowHintOnce("task4_panel", task4Hint, KeyCode.Tab, task4HintDelay);
+            ShowTABOnce("task4_panel", task4HintDelay);
     }
 
-    void ShowHintInternal(string text, KeyCode dismissKey, float delay)
+    void ShowTABOnce(string id, float delay)
     {
-        if (string.IsNullOrWhiteSpace(text)) return;
-        EnsureRuntimeUi();
-
-        if (_showCo != null)
-            StopCoroutine(_showCo);
-
-        if (_fadeCo != null)
-        {
-            StopCoroutine(_fadeCo);
-            _fadeCo = null;
-        }
-
-        _showCo = StartCoroutine(CoShow(text, dismissKey, delay));
+        if (_shownIds.Contains(id)) return;
+        _shownIds.Add(id);
+        StartFadeIn(hintGroup_TAB, ref _coTAB, delay);
     }
 
-    IEnumerator CoShow(string text, KeyCode dismissKey, float delay)
+    void ShowInteractOnce(string id, float delay)
     {
-        if (delay > 0f)
-            yield return new WaitForSecondsRealtime(delay);
-
-        if (hintText != null)
-            hintText.text = text;
-
-        _dismissKey = dismissKey;
-        _visible = true;
-        _fallbackBreathTime = 0f;
-
-        if (hintGroup != null)
-        {
-            hintGroup.gameObject.SetActive(true);
-            hintGroup.alpha = breathAnimator != null ? 1f : fallbackMinAlpha;
-        }
-
-        if (breathAnimator != null)
-        {
-            breathAnimator.enabled = true;
-            breathAnimator.Play(0, 0, 0f);
-        }
-
-        _showCo = null;
+        if (_shownIds.Contains(id)) return;
+        _shownIds.Add(id);
+        StartFadeIn(hintGroup_Interact, ref _coInteract, delay);
     }
 
-    IEnumerator CoFadeOut()
+    void ShowSpaceOnce(string id, float delay)
     {
-        _visible = false;
+        if (_shownIds.Contains(id)) return;
+        _shownIds.Add(id);
+        StartFadeIn(hintGroup_Space, ref _coSpace, delay);
+    }
 
-        if (breathAnimator != null)
-            breathAnimator.enabled = false;
+    // ========================
+    // 内部：淡入 / 淡出 / 立即隐藏
+    // ========================
 
-        if (hintGroup == null)
+    void TryDismiss(CanvasGroup cg, ref Coroutine field, KeyCode key)
+    {
+        if (cg == null || !(cg.alpha > 0.01f)) return;
+        if (Input.GetKeyDown(key))
+            StartFadeOut(cg, ref field);
+    }
+
+    void StartFadeIn(CanvasGroup cg, ref Coroutine field, float delay)
+    {
+        if (cg == null) return;
+        if (field != null) StopCoroutine(field);
+        cg.gameObject.SetActive(true);
+        field = StartCoroutine(CoFadeIn(cg, delay));
+    }
+
+    void StartFadeOut(CanvasGroup cg, ref Coroutine field)
+    {
+        if (cg == null || cg.alpha < 0.01f) return;
+        if (field != null) StopCoroutine(field);
+        field = StartCoroutine(CoFadeOut(cg));
+    }
+
+    IEnumerator CoFadeIn(CanvasGroup cg, float delay)
+    {
+        if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+        float t = 0f;
+        float dur = Mathf.Max(0.01f, fadeSeconds);
+        while (t < dur)
         {
-            _fadeCo = null;
-            yield break;
-        }
-
-        float start = hintGroup.alpha;
-        float time = 0f;
-        float duration = Mathf.Max(0.01f, fadeSeconds);
-
-        while (time < duration)
-        {
-            time += Time.unscaledDeltaTime;
-            hintGroup.alpha = Mathf.Lerp(start, 0f, time / duration);
+            t += Time.unscaledDeltaTime;
+            cg.alpha = t / dur;
             yield return null;
         }
-
-        hintGroup.alpha = 0f;
-        hintGroup.gameObject.SetActive(false);
-        _fadeCo = null;
+        cg.alpha = 1f;
     }
 
-    void HideImmediate()
+    IEnumerator CoFadeOut(CanvasGroup cg)
     {
-        _visible = false;
-
-        if (breathAnimator != null)
-            breathAnimator.enabled = false;
-
-        if (hintGroup != null)
+        float start = cg.alpha;
+        float t = 0f;
+        float dur = Mathf.Max(0.01f, fadeSeconds);
+        while (t < dur)
         {
-            hintGroup.alpha = 0f;
-            hintGroup.gameObject.SetActive(false);
+            t += Time.unscaledDeltaTime;
+            cg.alpha = Mathf.Lerp(start, 0f, t / dur);
+            yield return null;
         }
+        cg.alpha = 0f;
+        cg.gameObject.SetActive(false);
+    }
 
-        if (hintText != null)
-            hintText.text = "";
+    void HideAllImmediate()
+    {
+        HideImmediate(hintGroup_TAB);
+        HideImmediate(hintGroup_Interact);
+        HideImmediate(hintGroup_Space);
+    }
+
+    void HideImmediate(CanvasGroup cg)
+    {
+        if (cg == null) return;
+        cg.alpha = 0f;
+        cg.gameObject.SetActive(false);
     }
 
     void BindStoryTaskManager()
     {
         if (storyTaskManager == null)
             storyTaskManager = FindFirstObjectByType<StoryTaskManager>();
-
         if (storyTaskManager == null) return;
-
         storyTaskManager.OnTaskEntered -= OnTaskEntered;
         storyTaskManager.OnTaskEntered += OnTaskEntered;
-    }
-
-    void EnsureRuntimeUi()
-    {
-        if (hintGroup != null && hintText != null) return;
-
-        var canvas = GetComponentInParent<Canvas>();
-        if (canvas == null)
-            canvas = FindFirstObjectByType<Canvas>();
-
-        if (canvas == null) return;
-
-        if (hintGroup == null)
-        {
-            var root = new GameObject("UIHintRuntime", typeof(RectTransform), typeof(CanvasRenderer), typeof(CanvasGroup));
-            root.transform.SetParent(canvas.transform, false);
-
-            var rect = root.GetComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = new Vector2(0f, 40f);
-            rect.sizeDelta = new Vector2(900f, 120f);
-
-            hintGroup = root.GetComponent<CanvasGroup>();
-        }
-
-        if (hintText == null && hintGroup != null)
-        {
-            var textGo = new GameObject("HintText", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
-            textGo.transform.SetParent(hintGroup.transform, false);
-
-            var rect = textGo.GetComponent<RectTransform>();
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = Vector2.zero;
-            rect.offsetMax = Vector2.zero;
-
-            hintText = textGo.GetComponent<TextMeshProUGUI>();
-            hintText.alignment = TextAlignmentOptions.Center;
-            hintText.enableWordWrapping = false;
-            hintText.fontSize = 30f;
-            hintText.color = Color.white;
-            hintText.raycastTarget = false;
-        }
     }
 }
