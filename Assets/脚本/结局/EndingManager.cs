@@ -92,7 +92,7 @@ public class EndingManager : MonoBehaviour
             return;
         }
 
-        takeoverFlow.Play();
+        takeoverUIBinder.PlayTakeoverEnding();
     }
 
     // ========== 结局3：醒来（固定文本结局，若你仍保留这个接口） ==========

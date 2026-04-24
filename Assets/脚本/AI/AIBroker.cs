@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using UnityEngine.SceneManagement;
 
 // AI 控制中心：
@@ -44,6 +45,19 @@ public class AIBroker : MonoBehaviour
     public EchoStage stageWhenEnterTask4 = EchoStage.Stage1_Explore; // 你自己选实际枚举
     public int subStateWhenEnterTask4 = 1;
 
+    [Header("Task 5 Preset Intro")]
+    public int taskIndexForLink5Intro = 5;
+    [TextArea(1, 3)]
+    public string link5IntroLine = "你有没有试着把你的想法写下来？";
+    public float link5IntroDelay = 0.2f;
+
+    [Header("Stage2 Link Trigger")]
+    public bool triggerStage2LinkByReplyKeywords = true;
+    public string[] stage2LinkKeywords = new[]
+    {
+        "连线", "记忆", "帮你回忆", "串起来", "找到联系", "线索", "拼起来"
+    };
+
 
     int _turnId = 0;
 
@@ -67,6 +81,7 @@ public class AIBroker : MonoBehaviour
     string _pendingAutoLine;
 
     string _pendingAutoEmotion = "neutral";
+    bool _link5IntroQueuedOrPlayed;
 
 
 
@@ -97,6 +112,7 @@ public class AIBroker : MonoBehaviour
     void OnTaskEntered(int taskIndex)
     {
         Debug.Log($"[AIBroker] OnTaskEntered taskIndex={taskIndex} need={stage1TriggerTaskIndex}");
+        TryQueueTask5Intro(taskIndex);
         if (taskIndex != stage1TriggerTaskIndex) return;
 
         // ✅ 切阶段：写到 EchoRunState
@@ -153,7 +169,6 @@ public class AIBroker : MonoBehaviour
 
 
                 AISessionState.I?.SetAIReply(line);
-                RunMemory.I?.AddHypothesis(line);
             }
         }
         catch (System.Exception e)
@@ -267,18 +282,14 @@ public class AIBroker : MonoBehaviour
 
     string BuildInjectedBlock(string userText)
     {
-        string last = AISessionState.I ? AISessionState.I.playerLastInput : "（沉默）";
-        string mem = AISessionState.I ? AISessionState.I.aiRecentMemory : "陈末苏醒了。";
         int san = AISessionState.I ? AISessionState.I.san : 85;
         string pinned = AISessionState.I ? AISessionState.I.BuildSavedBlock(6) : "（无）";
+        string recent = AISessionState.I ? AISessionState.I.BuildRecentTurnsBlock() : "（无）";
 
 
-        // ✅ 注意：PlayerLastInput 这里是“上一句话”，而 userText 是“本轮输入”
-        // 你想“上一句话永远真实”——那就把 last 设为“上一轮”，当前输入单独写
         return
-    $@"【PlayerLastInput】：{last}
-【UserState】：SAN={san}
-【AIRecentMemory】：{mem}
+    $@"【UserState】：SAN={san}
+{recent}
 【PinnedNotes】：{pinned}
 【UserInput】：{userText}";
     }
@@ -324,7 +335,9 @@ public class AIBroker : MonoBehaviour
         ctx.stage = s;
         ctx.subState = Mathf.Max(1, sub);
 
-        if (PlayerLoreState.Instance != null)
+        if (InventoryManager.Instance != null)
+            ctx.loreRefs = new List<LoreRef>(InventoryManager.Instance.GetUnlockedLoreRefs());
+        else if (PlayerLoreState.Instance != null)
             ctx.loreRefs = new List<LoreRef>(PlayerLoreState.Instance.GetAllLore());
         else
             ctx.loreRefs = new List<LoreRef>();
@@ -348,6 +361,65 @@ public class AIBroker : MonoBehaviour
         _debugInjected = true;
         // 注意：这里不要自动关 debugForceStage，
         // 因为 BuildBaseContext 里还会用 debugForceStage 做“覆盖 prompt”
+    }
+
+    void TryQueueTask5Intro(int taskIndex)
+    {
+        if (taskIndex != taskIndexForLink5Intro) return;
+        if (_link5IntroQueuedOrPlayed) return;
+        if (string.IsNullOrWhiteSpace(link5IntroLine)) return;
+
+        _link5IntroQueuedOrPlayed = true;
+        StartCoroutine(CoPresentPresetLineWhenReady(link5IntroLine, "neutral", link5IntroDelay));
+    }
+
+    IEnumerator CoPresentPresetLineWhenReady(string line, string emotion, float delaySeconds)
+    {
+        if (delaySeconds > 0f)
+            yield return new WaitForSecondsRealtime(delaySeconds);
+
+        while (busy && !endingLocked)
+            yield return null;
+
+        if (endingLocked) yield break;
+        PresentPresetLine(line, emotion);
+    }
+
+    public void PresentPresetLine(string line, string emotion = "neutral")
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        if (bottomChat == null) return;
+
+        _lastAILine = line;
+        bottomChat.ShowAI(line);
+        storyTaskManager?.RegisterAIDialogue(line);
+        AISessionState.I?.SetAIReply(line);
+        PlayTtsLine(line, emotion);
+    }
+
+    public async System.Threading.Tasks.Task<string> GenerateGuessFeedbackAsync(string itemName, string playerGuess)
+    {
+        if (cloudResponder == null) return null;
+        return await cloudResponder.GenerateGuessFeedbackAsync(itemName, playerGuess);
+    }
+
+    public void PlayTtsLine(string originalText, string emotion = "neutral")
+    {
+        if (ttsClient == null) return;
+
+        string ttsText = FilterTtsText(originalText);
+        if (string.IsNullOrWhiteSpace(ttsText)) return;
+
+        ttsClient.Speak(ttsText, emotion);
+    }
+
+    static string FilterTtsText(string originalText)
+    {
+        if (string.IsNullOrWhiteSpace(originalText)) return string.Empty;
+
+        string ttsText = Regex.Replace(originalText, @"（[^）]*）", "").Trim();
+        ttsText = Regex.Replace(ttsText, @"\([^)]*\)", "").Trim();
+        return ttsText;
     }
 
 
@@ -405,11 +477,8 @@ public class AIBroker : MonoBehaviour
             if (AISessionState.I != null)
                 AISessionState.I.SetAIReply(line);
 
-            RunMemory.I?.AddHypothesis(line);
-
             // ✅ 统一由 AIBroker 播 TTS（避免 CloudResponder 里也播导致重复）
-            if (ttsClient != null)
-                ttsClient.Speak(line, emo);
+            PlayTtsLine(line, emo);
         }
         catch (System.Exception e)
         {
@@ -595,8 +664,9 @@ public class AIBroker : MonoBehaviour
 
             bottomChat?.ShowAI(line);
             storyTaskManager?.RegisterAIDialogue(line);
-
-            RunMemory.I?.AddHypothesis(line);
+            AISessionState.I?.SetAIReply(line);
+            PlayTtsLine(line, _pendingAutoEmotion);
+            _pendingAutoEmotion = "neutral";
 
             if (logDebug) Debug.Log("[AIBroker] Buffered AutoTalk shown after typing.");
         }
@@ -655,42 +725,36 @@ public class AIBroker : MonoBehaviour
         curSub = Mathf.Clamp(curSub, 1, 4);
         var rt = rs.stage2Runtime ?? (rs.stage2Runtime = new Stage2RealityRuntime());
 
-        // advance<=0：不推进
-        if (advance <= 0)
-        {
-            rs.SetPending(EchoStage.Stage2_Rift, curSub, "Stage2:NoAdvance");
-            return;
-        }
-
         // ===== 当前在 S4：玩家回应情绪 -> 回到 resumeSub，并清零计数 =====
         if (curSub == 4)
         {
-            rt.progressCount = 0;
             int back = Mathf.Clamp(rt.resumeSub, 1, 3);
             rs.SetPending(EchoStage.Stage2_Rift, back, "Stage2:S4->Resume");
             return;
         }
 
-        // ===== 当前在 S1/S2/S3：推进成功一次 =====
-        rt.progressCount++;
+        // ===== 当前在 S1/S2/S3：advance=1 才推进，否则停留在当前状态 =====
+        int nextBase = curSub;
+        if (advance > 0)
+        {
+            nextBase = (curSub % 3) + 1;
 
-        // 计算下一个 base 子状态（1->2->3->1循环）
-        int nextBase = (curSub % 3) + 1;
+            if (curSub == 3)
+                rt.StepKeyword();
+        }
 
-        // S3 推进成功：让关键词滚动（下一轮换一个）
-        if (curSub == 3) rt.StepKeyword();
+        rt.RegisterBaseDialogueTurn();
 
-        // 如果累计推进 >=2：插入 S4
-        if (rt.progressCount >= 2)
+        if (rt.ShouldInsertS4())
         {
             rt.PickEmotion();
-            rt.resumeSub = nextBase; // S4 之后回到哪
+            rt.resumeSub = Mathf.Clamp(nextBase, 1, 3);
+            rt.ResetS4Counter();
             rs.SetPending(EchoStage.Stage2_Rift, 4, "Stage2:InsertS4");
             return;
         }
 
-        // 否则正常去下一个 base
-        rs.SetPending(EchoStage.Stage2_Rift, nextBase, "Stage2:NextBase");
+        rs.SetPending(EchoStage.Stage2_Rift, nextBase, advance > 0 ? "Stage2:Advance" : "Stage2:Hold");
     }
 
     public void OnEndingLock()

@@ -1,17 +1,15 @@
+using System;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 
+[Obsolete("RunMemory is deprecated. Recent dialogue context in AISessionState replaces hypothesis memory.")]
 public class RunMemory : MonoBehaviour
 {
     public static RunMemory I { get; private set; }
 
-    [TextArea(3, 10)] public string runSeedNote = "±¾¾Ö¿ªÊ¼£º¼ÇÒäÎª¿Õ¡£";
+    [TextArea(3, 10)] public string runSeedNote = "æœ¬å±€å¼€å§‹ï¼šè®°å¿†ä¸ºç©ºã€‚";
 
-    // ÊÂÊµ£¨¿ÉÖ±½ÓÕ¹Ê¾/¿ÉÎ¹¸øAI£©
     readonly List<string> facts = new();
-    // ÍÆ¶Ï£¨AIÉú³ÉºóÐ´»Ø£©
-    readonly List<string> hypotheses = new();
 
     void Awake()
     {
@@ -24,7 +22,6 @@ public class RunMemory : MonoBehaviour
     public void ClearForNewRun()
     {
         facts.Clear();
-        hypotheses.Clear();
         facts.Add(runSeedNote);
     }
 
@@ -36,11 +33,17 @@ public class RunMemory : MonoBehaviour
 
     public void AddHypothesis(string s)
     {
-        if (string.IsNullOrWhiteSpace(s)) return;
-        hypotheses.Add(s.Trim());
+        // Deprecated on purpose.
     }
 
-    // ¸ø prompt ÓÃ£º¿ØÖÆ³¤¶È£¬±ÜÃâ±¬ prompt
-    public List<string> GetRecentFacts(int n = 30) => facts.TakeLast(n).ToList();
-    public List<string> GetRecentHypotheses(int n = 12) => hypotheses.TakeLast(n).ToList();
+    public List<string> GetRecentFacts(int n = 30)
+    {
+        int count = Mathf.Clamp(n, 0, facts.Count);
+        return count <= 0 ? new List<string>() : facts.GetRange(Mathf.Max(0, facts.Count - count), count);
+    }
+
+    public List<string> GetRecentHypotheses(int n = 12)
+    {
+        return new List<string>();
+    }
 }

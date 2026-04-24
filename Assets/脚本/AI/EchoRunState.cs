@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 
 public class EchoRunState : MonoBehaviour
@@ -38,10 +38,22 @@ public class EchoRunState : MonoBehaviour
     {
         var beforeS = stage;
         var beforeSub = subState;
+        bool enteringStage2 = beforeS != EchoStage.Stage2_Rift && s == EchoStage.Stage2_Rift;
 
         stage = s;
         subState = Mathf.Max(1, ss);
         hasPending = false;
+
+        if (enteringStage2)
+        {
+            if (stage2Runtime == null)
+                stage2Runtime = new Stage2RealityRuntime();
+
+            stage2Runtime.ResetAll();
+
+            var takeover = FindFirstObjectByType<ManagedTakeoverSystem>();
+            takeover?.ResetForStage2();
+        }
 
         Debug.Log($"[StageSet] {beforeS}/{beforeSub} -> {stage}/{subState} reason={reason}");
         OnStageChanged?.Invoke(stage, subState, reason);

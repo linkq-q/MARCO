@@ -1,4 +1,4 @@
-﻿// MemoryBoardController.cs
+// MemoryBoardController.cs
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -15,6 +15,7 @@ public class MemoryBoardController : MonoBehaviour
 
     [Header("Scenario Binding")]
     public MemoryBoardScenario scenario;
+    public MemoryBoardTextBinder textBinder;
 
     [Tooltip("按固定顺序拖入 6 个节点（index 0..5），用于映射 scenario 的文本和正确答案。")]
     public List<MemoryBoardNode> nodesByIndex = new List<MemoryBoardNode>(6);
@@ -62,6 +63,10 @@ public class MemoryBoardController : MonoBehaviour
     [Tooltip("要关闭的面板根对象。不填则默认关闭 boardRoot.gameObject")]
     public GameObject panelRootToClose;
 
+    [Header("SAN Reward")]
+    [Tooltip("连线成功后是否触发一次本地 SAN 正反馈。")]
+    public bool rewardSanOnSuccess = true;
+
     // ===== runtime (per attempt) =====
     MemoryBoardNode _selected = null;
     readonly List<MemoryBoardNode> _pick = new List<MemoryBoardNode>(4);
@@ -78,6 +83,7 @@ public class MemoryBoardController : MonoBehaviour
     void Awake()
     {
         if (!boardRoot) boardRoot = transform as RectTransform;
+        if (!textBinder) textBinder = GetComponentInChildren<MemoryBoardTextBinder>(true);
 
         ApplyScenario(); // ✅ 自动从 Scenario 映射文本 + 正确答案
         AutoWireNodes(nodesByIndex);
@@ -100,6 +106,9 @@ public class MemoryBoardController : MonoBehaviour
     public void ApplyScenario()
     {
         if (!scenario) return;
+
+        if (textBinder != null && textBinder.scenario != scenario)
+            textBinder.SetScenario(scenario);
 
         // 1) 映射文本
         if (nodesByIndex != null && nodesByIndex.Count == 6 && scenario.nodeTexts != null && scenario.nodeTexts.Length == 6)
@@ -132,6 +141,15 @@ public class MemoryBoardController : MonoBehaviour
                 seq += (i == 0 ? "" : " -> ") + _correctSequence[i].name;
             Debug.Log($"[MemoryBoard] ApplyScenario correctSequenceCount={_correctSequence.Count} seq={seq}", this);
         }
+
+        if (clueOutputTMP != null && !appendClueText)
+            clueOutputTMP.text = string.Empty;
+    }
+
+    public void SetScenario(MemoryBoardScenario newScenario)
+    {
+        scenario = newScenario;
+        ApplyScenario();
     }
 
     public void ResetPuzzle()
@@ -261,6 +279,13 @@ public class MemoryBoardController : MonoBehaviour
 
                 completed = true;
 
+                if (rewardSanOnSuccess)
+                {
+                    var san = FindFirstObjectByType<SanSystem>();
+                    if (san != null)
+                        san.ApplyPlayerAction(SanSystem.PlayerActionType.LinkSuccess);
+                }
+
                 // ✅ 成功 toast
                 if (scenario && ToastSpawner.Instance != null && !string.IsNullOrEmpty(scenario.completedToastText))
                     ToastSpawner.Instance.Show(scenario.completedToastText);
@@ -372,12 +397,19 @@ public class MemoryBoardController : MonoBehaviour
 
     bool IsAttemptCorrect()
     {
-        if (_correctSequence == null || _correctSequence.Count != nodesPerAttempt) return false;
+        if (scenario == null || scenario.correctIndexSequence == null) return false;
+        if (scenario.correctIndexSequence.Length != nodesPerAttempt) return false;
         if (_pick.Count != nodesPerAttempt) return false;
 
         for (int i = 0; i < nodesPerAttempt; i++)
         {
-            if (_pick[i] != _correctSequence[i]) return false;
+            int pickedIndex = GetNodeIndex(_pick[i]);
+            if (pickedIndex != scenario.correctIndexSequence[i])
+            {
+                if (logDebug)
+                    Debug.Log($"[MemoryBoard] Attempt mismatch at {i}: picked={pickedIndex} expected={scenario.correctIndexSequence[i]}", this);
+                return false;
+            }
         }
         return true;
     }

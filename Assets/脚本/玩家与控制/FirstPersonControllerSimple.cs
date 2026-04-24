@@ -41,6 +41,7 @@ public class FirstPersonControllerSimple : MonoBehaviour, IEndingLockable
     bool _prevAllowCursorToggle;
     CursorLockMode _prevLockMode;
     bool _prevCursorVisible;
+    bool _chatInputLocked;
 
     float yawCenter;     // 中心朝向（通常是进入场景时的朝向）
     float yawOffset;     // 相对中心的偏移（被 clamp 的就是它）
@@ -63,7 +64,7 @@ public class FirstPersonControllerSimple : MonoBehaviour, IEndingLockable
 
     void Update()
     {
-        if (endingLocked) return;
+        if (endingLocked || _chatInputLocked) return;
         // （可选）保留你原来的调试逻辑，但加一个门：UI打开时禁止它乱改锁定状态
         if (allowCursorToggle)
         {
@@ -158,5 +159,20 @@ public class FirstPersonControllerSimple : MonoBehaviour, IEndingLockable
 
         Cursor.lockState = _prevLockMode;
         Cursor.visible = _prevCursorVisible;
+    }
+
+    public void SetChatInputLock(bool locked)
+    {
+        _chatInputLocked = locked;
+
+        if (locked)
+        {
+            verticalVel = 0f;
+            SetCursorLock(false);
+            return;
+        }
+
+        if (!endingLocked && allowCursorToggle && lockCursorOnStart)
+            SetCursorLock(true);
     }
 }

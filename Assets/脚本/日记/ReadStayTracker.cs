@@ -46,6 +46,8 @@ public class ReadStayTracker : MonoBehaviour
 
     public void Begin()
     {
+        if (!isActiveAndEnabled) return;
+
         _armed = true;
         _fired = false;
         _t0 = Time.unscaledTime;
@@ -59,5 +61,10 @@ public class ReadStayTracker : MonoBehaviour
         _t0 = -1f;
         _armedKey = null;
         _fired = false;
+    }
+
+    void OnDisable()
+    {
+        End();
     }
 }

@@ -1,262 +1,286 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 
 public class EndingImageRequester : MonoBehaviour
 {
-    const string SubmitEndpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
-    const string TaskEndpointPrefix = "https://dashscope.aliyuncs.com/api/v1/tasks/";
-
-    static readonly string[] PromptStopFragments =
+    static readonly string[] PlaceKeywords =
     {
-        "they", "them", "their", "with", "from", "that", "this", "those", "these", "already",
-        "start", "started", "continue", "continued", "suddenly", "because", "therefore",
-        "however", "then", "while", "still"
+        "酒店", "地铁", "工位", "会议室", "签约室", "医院", "银行",
+        "办公室", "租房", "咖啡馆", "机场", "舞台", "赛场", "车里",
+        "走廊", "窗前", "楼道", "停车场"
     };
 
-    [Header("DashScope")]
-    [TextArea(1, 2)] public string apiKey;
-    public string model = "wanx2.1-t2i-turbo";
+    static readonly string[] ObjectKeywords =
+    {
+        "合同", "手表", "玻璃", "键盘", "手机", "屏幕", "外卖",
+        "烟", "咖啡", "椅子", "文件", "印章", "钥匙", "奖杯",
+        "工牌", "银行卡", "笔记本"
+    };
 
-    [Header("Image Params")]
-    public string imageSize = "768*432";
-    public int timeoutSeconds = 30;
-    public int pollIntervalSeconds = 2;
-    public int maxPollCount = 15;
+    static readonly string[] ActionKeywords =
+    {
+        "签", "握", "坐", "站", "靠", "盯", "看", "走", "抽", "喝"
+    };
+
+    static readonly string[] PersonKeywords =
+    {
+        "他", "她", "Echo", "陈末"
+    };
+
+    const string FixedPrefix = "中国当代都市，电影摄影，冷色调，35mm胶片颗粒感，自然光，";
+    const string FixedSuffix = "，背影或空间构图，克制写实，无人物面部特写，无文字";
+    const string ENDPOINT =
+        "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+
+    [Header("万相2.6 API")]
+    [TextArea(1, 2)] public string apiKey;
+    public string model = "wan2.6-t2i";
+    public string imageSize = "1344*576";
+
+    [Header("超时")]
+    public int timeoutSeconds = 60;
 
     [Header("Debug")]
     public bool logDebug = false;
 
     public async Task<Texture2D> GenerateImageAsync(string paragraphText)
     {
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new Exception("DashScope apiKey is missing.");
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            Debug.LogWarning("[ImageReq] apiKey 未填写", this);
+            return null;
+        }
 
         string prompt = BuildPrompt(paragraphText);
-        string taskId = await SubmitTaskAsync(prompt);
-        string imageUrl = await PollImageUrlAsync(taskId);
+        if (logDebug) Debug.Log("[ImageReq] Prompt: " + prompt, this);
+
+        string imageUrl = await RequestImageUrlAsync(prompt);
+        if (string.IsNullOrEmpty(imageUrl)) return null;
+
         return await DownloadTextureAsync(imageUrl);
     }
 
     string BuildPrompt(string paragraphText)
     {
-        string core = ExtractPromptCore(paragraphText);
-        return "\u7535\u5f71\u611f\uff0c\u73b0\u5b9e\u4e3b\u4e49\uff0c\u4e2d\u56fd\u5f53\u4ee3\u90fd\u5e02\uff0c"
-            + core
-            + "\uff0c\u51b7\u8272\u8c03\uff0c35mm\u80f6\u7247";
+        string text = (paragraphText ?? string.Empty).Replace("\r", string.Empty).Trim();
+        string coreSentence = ExtractCoreSentence(text);
+        string dynamicPrefix = BuildDynamicPrefix(text);
+        return FixedPrefix + dynamicPrefix + coreSentence + FixedSuffix;
     }
 
-    string ExtractPromptCore(string paragraphText)
+    string ExtractCoreSentence(string text)
     {
-        if (string.IsNullOrWhiteSpace(paragraphText))
-            return "\u5ba4\u5185\u7a7a\u95f4\uff0c\u4eba\u7269\u80cc\u5f71\uff0c\u57ce\u5e02\u591c\u8272";
+        string[] sentences = SplitSentences(text);
 
-        string cleaned = paragraphText.Replace("\r", "\n");
-        cleaned = Regex.Replace(cleaned, @"\u201C[^\u201D]*\u201D|""[^""]*""|'[^']*'|\u2018[^\u2019]*\u2019", " ");
-        cleaned = cleaned.Replace("\n", " ");
-        cleaned = Regex.Replace(cleaned, "\\s+", " ").Trim();
+        string matched = FindSentenceByKeywords(sentences, PlaceKeywords);
+        if (!string.IsNullOrEmpty(matched)) return matched;
 
-        if (cleaned.Length > 80)
-            cleaned = cleaned.Substring(0, 80);
+        matched = FindSentenceByKeywords(sentences, ObjectKeywords);
+        if (!string.IsNullOrEmpty(matched)) return matched;
 
-        string[] parts = Regex.Split(cleaned, @"[\p{P}\p{Zs}]+");
-        var keywords = new List<string>();
-
-        for (int i = 0; i < parts.Length; i++)
+        for (int i = 0; i < sentences.Length; i++)
         {
-            string token = StripPromptNoise(parts[i]);
-            if (token.Length < 2) continue;
-            if (token.Length > 24) token = token.Substring(0, 24);
-            if (keywords.Contains(token)) continue;
-
-            keywords.Add(token);
-            if (keywords.Count >= 5) break;
+            string sentence = NormalizeSentence(sentences[i], 40);
+            if (string.IsNullOrEmpty(sentence)) continue;
+            if (ContainsAny(sentence, ActionKeywords) && ContainsAny(sentence, PersonKeywords))
+                return sentence;
         }
 
-        if (keywords.Count == 0)
-            keywords.Add(cleaned.Length > 0 ? cleaned : "interior");
-
-        return string.Join(", ", keywords);
+        return FallbackSentence(text);
     }
 
-    string StripPromptNoise(string text)
+    string BuildDynamicPrefix(string text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var sb = new StringBuilder();
 
-        string value = text.Trim();
-        for (int i = 0; i < PromptStopFragments.Length; i++)
-            value = value.Replace(PromptStopFragments[i], string.Empty);
+        if (ContainsAny(text, "镜", "玻璃", "反光", "倒影"))
+            sb.Append("镜面反射，双重曝光，空旷，");
 
-        value = Regex.Replace(value, "[^\\p{L}\\p{Nd}]+", " ").Trim();
-        return value;
+        if (ContainsAny(text, "签", "合同", "工位", "会议", "谈判", "办公"))
+            sb.Append("职场，商务，现代办公，");
+
+        if (ContainsAny(text, "夜", "深夜", "凌晨", "街灯"))
+            sb.Append("夜晚，");
+
+        if (ContainsAny(text, "断电", "结束", "消失", "黑暗", "最后"))
+            sb.Append("空镜，极简，");
+
+        if (ContainsAny(text, "清晨", "醒来", "病房", "白色"))
+            sb.Append("清晨，冷白色空间，");
+
+        return sb.ToString();
     }
 
-    async Task<string> SubmitTaskAsync(string prompt)
+    async Task<string> RequestImageUrlAsync(string prompt)
     {
-        var reqObj = new DashScopeImageRequest
-        {
-            model = model,
-            input = new DashScopeImageInput { prompt = prompt },
-            parameters = new DashScopeImageParameters
-            {
-                size = imageSize,
-                n = 1
-            }
-        };
+        string body =
+            "{"
+            + $"\"model\":\"{EscapeJson(model)}\","
+            + "\"input\":{"
+            + "\"messages\":[{"
+            + "\"role\":\"user\","
+            + "\"content\":[{"
+            + $"\"text\":\"{EscapeJson(prompt)}\""
+            + "}]"
+            + "}]"
+            + "},"
+            + "\"parameters\":{"
+            + "\"prompt_extend\":false,"
+            + "\"watermark\":false,"
+            + "\"n\":1,"
+            + $"\"size\":\"{EscapeJson(imageSize)}\""
+            + "}"
+            + "}";
 
-        string json = JsonUtility.ToJson(reqObj);
-        if (logDebug) Debug.Log("[EndingImageRequester] Submit:\n" + json, this);
-
-        using var req = new UnityWebRequest(SubmitEndpoint, UnityWebRequest.kHttpVerbPOST);
-        req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
+        using var req = new UnityWebRequest(ENDPOINT, UnityWebRequest.kHttpVerbPOST);
+        req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
         req.downloadHandler = new DownloadHandlerBuffer();
         req.timeout = timeoutSeconds;
         req.SetRequestHeader("Content-Type", "application/json");
         req.SetRequestHeader("Authorization", "Bearer " + apiKey);
-        req.SetRequestHeader("X-DashScope-Async", "enable");
 
         var op = req.SendWebRequest();
         while (!op.isDone) await Task.Yield();
 
         if (req.result != UnityWebRequest.Result.Success)
-            throw new Exception("DashScope submit failed: " + req.error + " body=" + req.downloadHandler.text);
-
-        string body = req.downloadHandler.text;
-        if (logDebug) Debug.Log("[EndingImageRequester] Submit response:\n" + body, this);
-
-        var resp = JsonUtility.FromJson<DashScopeTaskResponse>(body);
-        string taskId = resp?.output?.task_id;
-        if (string.IsNullOrEmpty(taskId))
-            throw new Exception("DashScope submit missing task_id: " + ExtractErrorMessage(resp, body));
-
-        return taskId;
-    }
-
-    async Task<string> PollImageUrlAsync(string taskId)
-    {
-        int pollCount = Mathf.Max(1, maxPollCount);
-
-        for (int i = 0; i < pollCount; i++)
         {
-            using var req = UnityWebRequest.Get(TaskEndpointPrefix + taskId);
-            req.downloadHandler = new DownloadHandlerBuffer();
-            req.timeout = timeoutSeconds;
-            req.SetRequestHeader("Authorization", "Bearer " + apiKey);
-
-            var op = req.SendWebRequest();
-            while (!op.isDone) await Task.Yield();
-
-            if (req.result != UnityWebRequest.Result.Success)
-                throw new Exception("DashScope poll failed: " + req.error + " body=" + req.downloadHandler.text);
-
-            string body = req.downloadHandler.text;
-            var resp = JsonUtility.FromJson<DashScopeTaskResponse>(body);
-            string status = resp?.output?.task_status;
-
-            if (logDebug) Debug.Log($"[EndingImageRequester] Poll {i + 1}/{pollCount} status={status}", this);
-
-            if (string.Equals(status, "SUCCEEDED", StringComparison.OrdinalIgnoreCase))
-            {
-                string url = resp?.output?.results != null && resp.output.results.Length > 0
-                    ? resp.output.results[0]?.url
-                    : null;
-
-                if (string.IsNullOrEmpty(url))
-                    throw new Exception("DashScope task succeeded but no image url was returned.");
-
-                return url;
-            }
-
-            if (string.Equals(status, "FAILED", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(status, "CANCELED", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new Exception("DashScope task failed: " + ExtractErrorMessage(resp, body));
-            }
-
-            if (i < pollCount - 1)
-                await WaitForSecondsRealtimeAsync(Mathf.Max(1, pollIntervalSeconds));
+            Debug.LogWarning("[ImageReq] HTTP error: " + req.error
+                + "\nbody: " + req.downloadHandler.text, this);
+            return null;
         }
 
-        throw new TimeoutException($"DashScope task polling timed out after {pollCount * Mathf.Max(1, pollIntervalSeconds)} seconds.");
+        string responseText = req.downloadHandler.text;
+        if (logDebug) Debug.Log("[ImageReq] Response: " + responseText, this);
+
+        var resp = JsonUtility.FromJson<Wan26Resp>(responseText);
+        string url = resp?.output?.choices != null && resp.output.choices.Length > 0
+            ? resp.output.choices[0]?.message?.content != null
+              && resp.output.choices[0].message.content.Length > 0
+                ? resp.output.choices[0].message.content[0]?.image
+                : null
+            : null;
+
+        if (string.IsNullOrEmpty(url))
+            url = ExtractImageUrlFallback(responseText);
+
+        if (string.IsNullOrEmpty(url))
+            Debug.LogWarning("[ImageReq] 未能解析到图片URL，响应：" + responseText, this);
+
+        return url;
     }
 
     async Task<Texture2D> DownloadTextureAsync(string url)
     {
         using var req = UnityWebRequestTexture.GetTexture(url);
-        req.timeout = timeoutSeconds;
-
         var op = req.SendWebRequest();
         while (!op.isDone) await Task.Yield();
 
         if (req.result != UnityWebRequest.Result.Success)
-            throw new Exception("Image download failed: " + req.error);
+        {
+            Debug.LogWarning("[ImageReq] 图片下载失败: " + req.error, this);
+            return null;
+        }
 
         return DownloadHandlerTexture.GetContent(req);
     }
 
-    async Task WaitForSecondsRealtimeAsync(float seconds)
+    static string[] SplitSentences(string text)
     {
-        float endTime = Time.realtimeSinceStartup + Mathf.Max(0.1f, seconds);
-        while (Time.realtimeSinceStartup < endTime)
-            await Task.Yield();
+        if (string.IsNullOrEmpty(text)) return Array.Empty<string>();
+
+        return text.Replace("\r", string.Empty)
+            .Split(new[] { "。", "！", "？", ".", "!", "?", "\n" }, StringSplitOptions.RemoveEmptyEntries);
     }
 
-    static string ExtractErrorMessage(DashScopeTaskResponse resp, string rawBody)
+    static string FindSentenceByKeywords(string[] sentences, string[] keywords)
     {
-        if (!string.IsNullOrWhiteSpace(resp?.message))
-            return resp.message;
+        for (int i = 0; i < sentences.Length; i++)
+        {
+            string sentence = NormalizeSentence(sentences[i], 40);
+            if (string.IsNullOrEmpty(sentence)) continue;
+            if (ContainsAny(sentence, keywords))
+                return sentence;
+        }
 
-        if (!string.IsNullOrWhiteSpace(resp?.code))
-            return resp.code;
-
-        return rawBody;
+        return null;
     }
 
-    [Serializable]
-    class DashScopeImageRequest
+    static string FallbackSentence(string text)
     {
-        public string model;
-        public DashScopeImageInput input;
-        public DashScopeImageParameters parameters;
+        if (string.IsNullOrWhiteSpace(text)) return "一个人站在城市空间里";
+
+        string[] sentences = SplitSentences(text);
+        if (sentences.Length > 0)
+        {
+            string first = NormalizeSentence(sentences[0], int.MaxValue);
+            string second = sentences.Length > 1 ? NormalizeSentence(sentences[1], int.MaxValue) : null;
+
+            if (!string.IsNullOrEmpty(first) && !string.IsNullOrEmpty(second))
+                return first + "，" + second;
+
+            if (!string.IsNullOrEmpty(first))
+                return first;
+        }
+
+        string clipped = text.Length > 80 ? text.Substring(0, 80) : text;
+        clipped = clipped.Trim('，', '。', '！', '？', ',', '.', '!', '?', ';', ':', ' ');
+        return string.IsNullOrEmpty(clipped) ? "一个人站在城市空间里" : clipped;
     }
 
-    [Serializable]
-    class DashScopeImageInput
+    static string NormalizeSentence(string sentence, int maxLength)
     {
-        public string prompt;
+        if (string.IsNullOrEmpty(sentence)) return null;
+
+        string trimmed = sentence.Trim();
+        if (maxLength > 0 && trimmed.Length > maxLength)
+            trimmed = trimmed.Substring(0, maxLength);
+
+        return trimmed.Trim('，', '。', '！', '？', ',', '.', '!', '?', ';', ':', ' ');
     }
 
-    [Serializable]
-    class DashScopeImageParameters
+    static bool ContainsAny(string text, params string[] keywords)
     {
-        public string size;
-        public int n;
+        if (string.IsNullOrEmpty(text) || keywords == null) return false;
+
+        for (int i = 0; i < keywords.Length; i++)
+        {
+            string keyword = keywords[i];
+            if (!string.IsNullOrEmpty(keyword) && text.Contains(keyword))
+                return true;
+        }
+
+        return false;
     }
 
-    [Serializable]
-    class DashScopeTaskResponse
+    static string ExtractImageUrlFallback(string responseText)
     {
-        public string request_id;
-        public string code;
-        public string message;
-        public DashScopeTaskOutput output;
+        if (string.IsNullOrEmpty(responseText)) return null;
+
+        int imgIdx = responseText.IndexOf("\"image\":", StringComparison.Ordinal);
+        if (imgIdx < 0) return null;
+
+        int start = responseText.IndexOf("\"", imgIdx + 8, StringComparison.Ordinal);
+        if (start < 0) return null;
+        start += 1;
+
+        int end = responseText.IndexOf("\"", start, StringComparison.Ordinal);
+        if (end <= start) return null;
+
+        return responseText.Substring(start, end - start);
     }
 
-    [Serializable]
-    class DashScopeTaskOutput
-    {
-        public string task_id;
-        public string task_status;
-        public DashScopeImageResult[] results;
-    }
+    static string EscapeJson(string s) => (s ?? string.Empty)
+        .Replace("\\", "\\\\")
+        .Replace("\"", "\\\"")
+        .Replace("\n", "\\n")
+        .Replace("\r", string.Empty);
 
-    [Serializable]
-    class DashScopeImageResult
-    {
-        public string url;
-    }
+    [Serializable] class Wan26Resp { public Wan26Output output; }
+    [Serializable] class Wan26Output { public Wan26Choice[] choices; public bool finished; }
+    [Serializable] class Wan26Choice { public string finish_reason; public Wan26Message message; }
+    [Serializable] class Wan26Message { public string role; public Wan26Content[] content; }
+    [Serializable] class Wan26Content { public string image; public string type; }
 }

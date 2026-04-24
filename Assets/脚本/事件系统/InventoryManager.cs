@@ -1,10 +1,13 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 public class InventoryManager : MonoBehaviour
 {
     public static InventoryManager Instance { get; private set; }
+
+    [Header("Lore Unlock")]
+    public ItemLoreUnlockDatabase loreUnlockDatabase;
 
     [Serializable]
     public class ItemRuntime
@@ -14,6 +17,7 @@ public class InventoryManager : MonoBehaviour
         // ✅ 原 takenOut（拿出/装备）改为“推测填空”
         public bool guessEnabled;                   // 是否开启“推测填空”
         public string guessAnswer;                  // 玩家填的答案（可为空）
+        public string guessFeedback;                // Echo 对这次推测的即时回应
 
         public List<string> logs = new List<string>(); // 该道具的语料/记录
     }
@@ -31,6 +35,9 @@ public class InventoryManager : MonoBehaviour
     // 当前选中
     ItemRuntime selected;
     public ItemRuntime Selected => selected;
+
+    readonly List<LoreRef> unlockedLoreRefs = new List<LoreRef>();
+    readonly HashSet<string> unlockedLoreIds = new HashSet<string>();
 
     [Header("Debug（可选）")]
     public bool debugLog = false;
@@ -67,10 +74,12 @@ public class InventoryManager : MonoBehaviour
         if (HasItem(data.id)) return;
 
         // ✅ 原 takenOut=false 改为 guessEnabled=false（默认不打开填空）
-        var rt = new ItemRuntime { data = data, guessEnabled = false, guessAnswer = "" };
+        var rt = new ItemRuntime { data = data, guessEnabled = false, guessAnswer = "", guessFeedback = "" };
         owned.Add(rt);
 
         if (debugLog) Debug.Log($"[Inventory] AddItem: {data.id}");
+
+        UnlockLoreForItem(data);
 
         // 中文注释：入库后默认选中新道具
         SelectItem(rt);
@@ -200,5 +209,60 @@ public class InventoryManager : MonoBehaviour
 
         OnInventoryChanged?.Invoke();
         OnSelectedChanged?.Invoke(selected);
+    }
+
+    public IReadOnlyList<LoreRef> GetUnlockedLoreRefs()
+    {
+        return unlockedLoreRefs;
+    }
+
+    void UnlockLoreForItem(ItemData data)
+    {
+        if (data == null) return;
+
+        bool addedAny = false;
+        var refs = loreUnlockDatabase != null ? loreUnlockDatabase.GetLoreRefs(data) : null;
+        if (refs != null)
+        {
+            for (int i = 0; i < refs.Count; i++)
+                addedAny |= AddUnlockedLore(refs[i]);
+        }
+
+        if (!addedAny)
+            AddUnlockedLore(BuildFallbackLoreRef(data));
+    }
+
+    bool AddUnlockedLore(LoreRef lore)
+    {
+        string id = string.IsNullOrWhiteSpace(lore.id) ? Guid.NewGuid().ToString("N") : lore.id;
+        if (unlockedLoreIds.Contains(id)) return false;
+
+        lore.id = id;
+        unlockedLoreIds.Add(id);
+        unlockedLoreRefs.Add(lore);
+        return true;
+    }
+
+    LoreRef BuildFallbackLoreRef(ItemData data)
+    {
+        string summary = null;
+
+        if (!string.IsNullOrWhiteSpace(data.memoryFixedText))
+            summary = data.memoryFixedText;
+        else if (!string.IsNullOrWhiteSpace(data.memoryPromptOverride))
+            summary = data.memoryPromptOverride;
+        else
+            summary = data.displayName;
+
+        if (!string.IsNullOrWhiteSpace(summary) && summary.Length > 80)
+            summary = summary.Substring(0, 80);
+
+        return new LoreRef
+        {
+            id = $"item_{data.id}",
+            title = data.displayName,
+            shortText = summary,
+            rawText = summary
+        };
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -54,7 +54,39 @@ public class DoubaoTtsHttpClient : MonoBehaviour
     [Range(0.1f, 3.0f)]
     public float pitchRatio = 1.0f;
 
+    [Header("Realtime Stream Playback")]
+    [Tooltip("开启后优先请求 PCM，并在接收音频分片时直接播放。")]
+    public bool enableRealtimeStreaming = true;
+
+    [Tooltip("实时播放建议使用 pcm。若填其它编码，会自动回退到整段播放。")]
+    public string realtimeEncoding = "pcm";
+
+    [Tooltip("PCM 声道数。当前链路按单声道处理最稳。")]
+    public int pcmChannels = 1;
+
+    [Tooltip("创建循环流式 AudioClip 的时长（秒）。")]
+    public float streamClipSeconds = 1f;
+
+    [Tooltip("至少缓存这么多秒再开播，避免一开口就卡顿。")]
+    public float prebufferSeconds = 0.2f;
+
+    [Tooltip("环形缓冲最多保留多少秒的 PCM 数据。")]
+    public float maxBufferedSeconds = 8f;
+
+    [Tooltip("流式播放完成后，继续保留一点静音尾巴，让最后一小段真正播完，避免听起来像被截断。")]
+    public float streamTailPaddingSeconds = 0.12f;
+
+    [Tooltip("在流式尾音后附加一个很短的淡出，减少末尾硬切产生的点击感。")]
+    public float streamFadeOutSeconds = 0.02f;
+
+    [Tooltip("AudioSource 播完后再额外保留一点时间，避免末尾被系统提前回收。")]
+    public float playbackFinishDelaySeconds = 0.3f;
+
     const string WS_URL = "wss://openspeech.bytedance.com/api/v1/tts/ws_binary";
+
+    Coroutine _speakCo;
+    int _speakSerial;
+    PcmStreamPlayback _activeStream;
 
     [Serializable]
     class TtsReq
@@ -107,21 +139,55 @@ public class DoubaoTtsHttpClient : MonoBehaviour
             return;
         }
 
-        StartCoroutine(CoSpeak(text, emotion));
+        StopCurrentSpeak();
+        _speakSerial++;
+        _speakCo = StartCoroutine(CoSpeak(text, emotion, _speakSerial));
     }
 
-    System.Collections.IEnumerator CoSpeak(string text, string emotion)
+    void StopCurrentSpeak()
     {
+        if (_speakCo != null)
+        {
+            StopCoroutine(_speakCo);
+            _speakCo = null;
+        }
+
+        if (_activeStream != null)
+        {
+            _activeStream.Abort();
+            _activeStream = null;
+        }
+
+        if (audioSource)
+            audioSource.Stop();
+    }
+
+    bool CanUseRealtimeStream()
+    {
+        return enableRealtimeStreaming &&
+               string.Equals(realtimeEncoding, "pcm", StringComparison.OrdinalIgnoreCase);
+    }
+
+    System.Collections.IEnumerator CoSpeak(string text, string emotion, int speakSerial)
+    {
+        if (CanUseRealtimeStream())
+        {
+            yield return CoSpeakRealtime(text, emotion, speakSerial);
+            _speakCo = null;
+            yield break;
+        }
+
         bool done = false;
         byte[] audioBytes = null;
         Exception err = null;
+        string requestEncoding = encoding;
 
         // 用 Task 跑 WebSocket（避免 Unity 主线程卡死）
         _ = Task.Run(async () =>
         {
             try
             {
-                audioBytes = await RequestTtsBytesAsync(text, emotion);
+                audioBytes = await RequestTtsBytesAsync(text, emotion, requestEncoding);
             }
             catch (Exception e)
             {
@@ -147,7 +213,7 @@ public class DoubaoTtsHttpClient : MonoBehaviour
         }
 
         // 写临时文件（Unity 加载 mp3/wav 更稳）
-        string ext = (encoding == "wav") ? "wav" : "mp3";
+        string ext = string.Equals(requestEncoding, "wav", StringComparison.OrdinalIgnoreCase) ? "wav" : "mp3";
         string path = Path.Combine(Application.temporaryCachePath, $"tts_{Guid.NewGuid():N}.{ext}");
         try { File.WriteAllBytes(path, audioBytes); }
         catch (Exception e)
@@ -157,7 +223,7 @@ public class DoubaoTtsHttpClient : MonoBehaviour
         }
 
         // 加载并播放
-        AudioType type = (encoding == "wav") ? AudioType.WAV : AudioType.MPEG;
+        AudioType type = string.Equals(requestEncoding, "wav", StringComparison.OrdinalIgnoreCase) ? AudioType.WAV : AudioType.MPEG;
         using var clipReq = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type);
         clipReq.timeout = 20;
         yield return clipReq.SendWebRequest();
@@ -169,12 +235,113 @@ public class DoubaoTtsHttpClient : MonoBehaviour
         }
 
         var clip = DownloadHandlerAudioClip.GetContent(clipReq);
-        audioSource.Stop();
-        audioSource.clip = clip;
-        audioSource.Play();
+        if (speakSerial == _speakSerial)
+        {
+            audioSource.Stop();
+            audioSource.clip = clip;
+            audioSource.Play();
+
+            yield return new WaitUntil(() => speakSerial != _speakSerial || !audioSource.isPlaying);
+
+            if (speakSerial == _speakSerial && playbackFinishDelaySeconds > 0f)
+                yield return new WaitForSecondsRealtime(playbackFinishDelaySeconds);
+        }
+
+        _speakCo = null;
     }
 
-    async Task<byte[]> RequestTtsBytesAsync(string text, string emotion)
+    System.Collections.IEnumerator CoSpeakRealtime(string text, string emotion, int speakSerial)
+    {
+        bool done = false;
+        Exception err = null;
+
+        int channels = Mathf.Max(1, pcmChannels);
+        int clipSamples = Mathf.Max(sampleRate, Mathf.RoundToInt(sampleRate * Mathf.Max(0.25f, streamClipSeconds)));
+        int prebufferSamples = Mathf.RoundToInt(sampleRate * channels * Mathf.Max(0f, prebufferSeconds));
+        int tailPaddingSamples = Mathf.RoundToInt(sampleRate * channels * Mathf.Max(0f, streamTailPaddingSeconds));
+        int fadeOutSamples = Mathf.RoundToInt(sampleRate * channels * Mathf.Max(0f, streamFadeOutSeconds));
+
+        var stream = new PcmStreamPlayback(sampleRate, channels, maxBufferedSeconds);
+        _activeStream = stream;
+
+        var clip = AudioClip.Create(
+            $"tts_stream_{Guid.NewGuid():N}",
+            clipSamples,
+            channels,
+            sampleRate,
+            true,
+            stream.FillAudioData);
+
+        bool prevLoop = audioSource.loop;
+        audioSource.Stop();
+        audioSource.clip = clip;
+        audioSource.loop = true;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RequestTtsBytesAsync(
+                    text,
+                    emotion,
+                    realtimeEncoding,
+                    stream.EnqueuePcm16Chunk);
+            }
+            catch (Exception e)
+            {
+                err = e;
+                stream.Abort();
+            }
+            finally
+            {
+                stream.MarkCompleted(tailPaddingSamples, fadeOutSamples);
+                done = true;
+            }
+        });
+
+        while (!done && stream.BufferedSamples < prebufferSamples)
+            yield return null;
+
+        if (err != null)
+        {
+            Debug.LogError("[TTSv2] " + err);
+            audioSource.loop = prevLoop;
+            if (_activeStream == stream) _activeStream = null;
+            yield break;
+        }
+
+        if (speakSerial == _speakSerial && stream.BufferedSamples > 0)
+            audioSource.Play();
+
+        while (true)
+        {
+            if (err != null)
+            {
+                Debug.LogError("[TTSv2] " + err);
+                break;
+            }
+
+            if (done && stream.IsDrained)
+                break;
+
+            yield return null;
+        }
+
+        if (speakSerial == _speakSerial && playbackFinishDelaySeconds > 0f)
+            yield return new WaitForSecondsRealtime(playbackFinishDelaySeconds);
+
+        if (speakSerial == _speakSerial)
+            audioSource.Stop();
+
+        audioSource.loop = prevLoop;
+        if (_activeStream == stream) _activeStream = null;
+    }
+
+    async Task<byte[]> RequestTtsBytesAsync(
+        string text,
+        string emotion,
+        string requestEncoding,
+        Action<byte[]> onAudioChunk = null)
     {
         // 1) 组装 JSON（结构和你 v1 很像，但 operation=submit）
         var req = new TtsReq
@@ -190,7 +357,7 @@ public class DoubaoTtsHttpClient : MonoBehaviour
             audio = new TtsReq.Audio
             {
                 voice_type = voiceType,
-                encoding = encoding,
+                encoding = requestEncoding,
                 rate = sampleRate,
                 speed_ratio = speedRatio,
                 volume_ratio = volumeRatio,
@@ -274,7 +441,14 @@ public class DoubaoTtsHttpClient : MonoBehaviour
                 // 参考公开实现：payload 前 8B 是一些元信息（sequence 等），音频从 payload[8..] 开始 :contentReference[oaicite:10]{index=10}
                 if (payload.Length > 8)
                 {
-                    ms.Write(payload, 8, payload.Length - 8);
+                    int audioLen = payload.Length - 8;
+                    byte[] audioChunk = new byte[audioLen];
+                    Buffer.BlockCopy(payload, 8, audioChunk, 0, audioLen);
+
+                    if (onAudioChunk != null)
+                        onAudioChunk(audioChunk);
+                    else
+                        ms.Write(audioChunk, 0, audioChunk.Length);
                 }
 
                 // flags==3 表示最后一包（sequence<0 的结束包） :contentReference[oaicite:11]{index=11}
@@ -306,6 +480,136 @@ public class DoubaoTtsHttpClient : MonoBehaviour
         }
 
         return ms.ToArray();
+    }
+
+    sealed class PcmStreamPlayback
+    {
+        readonly object _gate = new object();
+        readonly float[] _ring;
+        int _readPos;
+        int _writePos;
+        int _count;
+        bool _completed;
+        bool _aborted;
+        int _tailPaddingSamplesRemaining;
+        int _fadeOutSamplesRemaining;
+        int _fadeOutTotalSamples;
+        float _lastQueuedSample;
+
+        public PcmStreamPlayback(int sampleRate, int channels, float maxSeconds)
+        {
+            int capacity = Mathf.Max(4096, Mathf.RoundToInt(sampleRate * channels * Mathf.Max(1f, maxSeconds)));
+            _ring = new float[capacity];
+        }
+
+        public int BufferedSamples
+        {
+            get
+            {
+                lock (_gate) return _count;
+            }
+        }
+
+        public bool IsDrained
+        {
+            get
+            {
+                lock (_gate) return _completed &&
+                                   _count <= 0 &&
+                                   _tailPaddingSamplesRemaining <= 0 &&
+                                   _fadeOutSamplesRemaining <= 0;
+            }
+        }
+
+        public void EnqueuePcm16Chunk(byte[] pcmChunk)
+        {
+            if (pcmChunk == null || pcmChunk.Length < 2) return;
+
+            lock (_gate)
+            {
+                if (_aborted) return;
+
+                int samples = pcmChunk.Length / 2;
+                for (int i = 0; i < samples; i++)
+                {
+                    short raw = (short)(pcmChunk[i * 2] | (pcmChunk[i * 2 + 1] << 8));
+                    float sample = raw / 32768f;
+                    WriteSampleUnsafe(sample);
+                }
+            }
+        }
+
+        public void FillAudioData(float[] data)
+        {
+            if (data == null) return;
+
+            lock (_gate)
+            {
+                int copied = 0;
+                while (copied < data.Length && _count > 0)
+                {
+                    data[copied++] = _ring[_readPos];
+                    _readPos = (_readPos + 1) % _ring.Length;
+                    _count--;
+                }
+
+                while (copied < data.Length && _fadeOutSamplesRemaining > 0)
+                {
+                    float t = (_fadeOutSamplesRemaining - 1) / (float)Mathf.Max(1, _fadeOutTotalSamples);
+                    data[copied++] = _lastQueuedSample * t;
+                    _fadeOutSamplesRemaining--;
+                }
+
+                while (copied < data.Length && _tailPaddingSamplesRemaining > 0)
+                {
+                    data[copied++] = 0f;
+                    _tailPaddingSamplesRemaining--;
+                }
+
+                while (copied < data.Length)
+                    data[copied++] = 0f;
+            }
+        }
+
+        public void MarkCompleted(int tailPaddingSamples, int fadeOutSamples)
+        {
+            lock (_gate)
+            {
+                if (_completed) return;
+
+                _completed = true;
+                _tailPaddingSamplesRemaining = Mathf.Max(0, tailPaddingSamples);
+                _fadeOutTotalSamples = Mathf.Max(0, fadeOutSamples);
+                _fadeOutSamplesRemaining = _fadeOutTotalSamples;
+            }
+        }
+
+        public void Abort()
+        {
+            lock (_gate)
+            {
+                _aborted = true;
+                _completed = true;
+                _count = 0;
+                _tailPaddingSamplesRemaining = 0;
+                _fadeOutSamplesRemaining = 0;
+                _fadeOutTotalSamples = 0;
+            }
+        }
+
+        void WriteSampleUnsafe(float sample)
+        {
+            if (_count >= _ring.Length)
+            {
+                _readPos = (_readPos + 1) % _ring.Length;
+                _count--;
+            }
+
+            _ring[_writePos] = sample;
+            _writePos = (_writePos + 1) % _ring.Length;
+            _count++;
+            _lastQueuedSample = sample;
+        }
     }
 
     static byte[] BuildFullClientRequestFrame(byte[] gzPayload)
@@ -362,5 +666,10 @@ public class DoubaoTtsHttpClient : MonoBehaviour
     {
         try { return Encoding.UTF8.GetString(bytes); }
         catch { return "(non-utf8 error message)"; }
+    }
+
+    void OnDisable()
+    {
+        StopCurrentSpeak();
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 
 /// <summary>
@@ -59,12 +59,11 @@ public class ManagedTakeoverSystem : MonoBehaviour
 
     string _lastColorKey = null;
     float _lastRate = -999f;
+    bool _takeoverEndingTriggered;
 
     void Awake()
     {
-        Progress = Mathf.Clamp(startProgress, minProgress, maxProgress);
-        FireProgressChanged();
-        RefreshRateEvent(force: true);
+        ResetForStage2();
     }
 
     void Update()
@@ -96,9 +95,25 @@ public class ManagedTakeoverSystem : MonoBehaviour
         {
             Progress = Mathf.Clamp(Progress + r * dt, minProgress, maxProgress);
             FireProgressChanged();
+            TryTriggerTakeoverEnding();
         }
 
         RefreshRateEvent();
+    }
+
+    public void ResetForStage2()
+    {
+        Progress = Mathf.Clamp(startProgress, minProgress, maxProgress);
+        NoProgressTimer = 0f;
+        FreezeTimer = 0f;
+        _guideTimer = 0f;
+        _takeoverEndingTriggered = false;
+
+        FireProgressChanged();
+        RefreshRateEvent(force: true);
+
+        if (logDebug)
+            Debug.Log($"[Takeover] ResetForStage2 -> progress={Progress:F1} rate={GetCurrentRate():F2}");
     }
 
     // ===================== 对外：推进/引导行为 =====================
@@ -165,9 +180,23 @@ public class ManagedTakeoverSystem : MonoBehaviour
         float before = Progress;
         Progress = Mathf.Clamp(Progress + delta, minProgress, maxProgress);
         FireProgressChanged();
+        TryTriggerTakeoverEnding();
 
         if (logDebug)
             Debug.Log($"[Takeover] {reason} delta={delta} P {before:F1}->{Progress:F1}");
+    }
+
+    void TryTriggerTakeoverEnding()
+    {
+        if (_takeoverEndingTriggered) return;
+        if (Progress < maxProgress) return;
+
+        _takeoverEndingTriggered = true;
+
+        if (logDebug)
+            Debug.Log("[Takeover] Progress reached max -> trigger AI takeover ending.");
+
+        EndingManager.I?.TriggerAITakeoverEnding();
     }
 
     // ===================== 速率判定 =====================

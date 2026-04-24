@@ -57,11 +57,10 @@ public class EndingRequester : MonoBehaviour
     public enum GrayLevel { L0_Clean = 0, L1_Tool = 1, L2_Talk = 2, L3_Edge = 3, L4_Dirty = 4, L5_NearCrime = 5 }
 
     // 用于流式回调
-    public event Action<string> OnEndingDelta;   // 每次增量文本
-    public event Action<string> OnEndingDone;    // 最终完整文本
-    public event Action<string> OnParagraphComplete; // 每当一个完整段落输出完毕时触发
-
-    readonly StringBuilder _paragraphBuffer = new StringBuilder();
+    public event Action<string> OnEndingDelta;          // 每次增量文本
+    public event Action<string> OnEndingDone;           // 最终完整文本
+    public event Action<string> OnParagraphComplete;    // 兼容旧逻辑
+    public event Action<int, string> OnParagraphReady;  // 段落已收集完整，index 从 0 开始
 
     [Serializable] class DSStreamChoiceDelta { public string content; }
     [Serializable] class DSStreamChoice { public DSStreamDelta delta; public string finish_reason; }
@@ -427,8 +426,6 @@ Echo设定：echo极度渴望真的成为人，她在心里是把陈末当成朋
     {
         if (string.IsNullOrEmpty(apiKey)) throw new Exception("DeepSeek apiKey missing");
 
-        ResetParagraphBuffer();
-
         var reqObj = new DSRequest
         {
             model = model,
@@ -446,6 +443,8 @@ Echo设定：echo极度渴望真的成为人，她在心里是把陈末当成朋
         if (logDebug) Debug.Log("[DeepSeek] Stream Request:\n" + json);
 
         var full = new StringBuilder();
+        var paragraphBuf = new StringBuilder();
+        int paragraphIndex = 0;
 
         using var req = new UnityWebRequest(ENDPOINT, "POST");
         req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
@@ -470,7 +469,22 @@ Echo设定：echo极度渴望真的成为人，她在心里是把陈末当成朋
 
                     full.Append(delta);
                     OnEndingDelta?.Invoke(delta); // ✅ UI 可立即追加显示
-                    AppendParagraphDelta(delta);
+
+                    paragraphBuf.Append(delta.Replace("\r", ""));
+                    string bufStr = paragraphBuf.ToString();
+                    int sepIdx;
+                    while ((sepIdx = bufStr.IndexOf("\n\n", StringComparison.Ordinal)) >= 0)
+                    {
+                        string para = bufStr.Substring(0, sepIdx).Trim();
+                        bufStr = bufStr.Substring(sepIdx + 2);
+                        if (para.Length >= 10)
+                        {
+                            OnParagraphComplete?.Invoke(para);
+                            OnParagraphReady?.Invoke(paragraphIndex++, para);
+                        }
+                    }
+                    paragraphBuf.Length = 0;
+                    paragraphBuf.Append(bufStr);
                 }
                 catch
                 {
@@ -488,54 +502,14 @@ Echo设定：echo极度渴望真的成为人，她在心里是把陈末当成朋
             throw new Exception("HTTP error: " + req.error + " body=" + req.downloadHandler.text);
 
         string result = full.ToString();
-        FlushParagraphBuffer();
+        string remaining = paragraphBuf.ToString().Trim();
+        if (remaining.Length >= 10)
+        {
+            OnParagraphComplete?.Invoke(remaining);
+            OnParagraphReady?.Invoke(paragraphIndex, remaining);
+        }
         OnEndingDone?.Invoke(result);
         return result;
-    }
-
-    void ResetParagraphBuffer()
-    {
-        _paragraphBuffer.Length = 0;
-    }
-
-    void AppendParagraphDelta(string delta)
-    {
-        if (string.IsNullOrEmpty(delta)) return;
-
-        _paragraphBuffer.Append(delta.Replace("\r", ""));
-        EmitCompletedParagraphsFromBuffer();
-    }
-
-    void EmitCompletedParagraphsFromBuffer()
-    {
-        string buffer = _paragraphBuffer.ToString();
-        int separatorIndex;
-        while ((separatorIndex = buffer.IndexOf("\n\n", StringComparison.Ordinal)) >= 0)
-        {
-            TryInvokeParagraphComplete(buffer.Substring(0, separatorIndex));
-            buffer = buffer.Substring(separatorIndex + 2);
-        }
-
-        _paragraphBuffer.Length = 0;
-        _paragraphBuffer.Append(buffer);
-    }
-
-    void FlushParagraphBuffer()
-    {
-        TryInvokeParagraphComplete(_paragraphBuffer.ToString());
-        _paragraphBuffer.Length = 0;
-    }
-
-    void TryInvokeParagraphComplete(string rawParagraph)
-    {
-        string paragraphText = NormalizeParagraphText(rawParagraph);
-        if (paragraphText.Length <= 10) return;
-        OnParagraphComplete?.Invoke(paragraphText);
-    }
-
-    static string NormalizeParagraphText(string rawParagraph)
-    {
-        return string.IsNullOrWhiteSpace(rawParagraph) ? string.Empty : rawParagraph.Trim();
     }
 
     // ===================== SSE DownloadHandlerScript =====================

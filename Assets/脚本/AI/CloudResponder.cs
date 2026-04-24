@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -134,21 +134,59 @@ public class CloudResponder : MonoBehaviour, IAIResponder
         string userPrompt = BuildUserPrompt(ctx, lore);
 
 
+        string text = await RequestSingleCompletionAsync(curSystemPrompt, userPrompt, 120, temperature);
+        text = Normalize(text);
+
+        // 无语料时不做命中 lore 校验
+        if (lore.Count > 0)
+        {
+            if (!Validate(text, lore, out string validateReason))
+                Debug.LogWarning($"[CloudResponder] Validation failed: {validateReason} text={text}");
+        }
+
+        if (!Validate(text, lore, out string reason))
+        {
+            Debug.LogWarning($"[CloudResponder] Validation failed: {reason} text={text}");
+            return text;
+        }
+
+        return text;
+    }
+
+    public async Task<string> GenerateGuessFeedbackAsync(string itemName, string playerGuess)
+    {
+        if (string.IsNullOrWhiteSpace(itemName) || string.IsNullOrWhiteSpace(playerGuess))
+            return null;
+
+        LastEmotion = "neutral";
+        LastBehavior = EchoBehavior.Calm;
+
+        string systemPrompt =
+@"你是Echo。
+玩家会提交一个关于道具的推测。
+你只用一句中文给出模糊回应，不直接说对或错，不解释规则，不要加引号。
+语气像Echo，长度控制在10到30字。";
+
+        string userPrompt = $"玩家认为[{itemName}]是[{playerGuess}]，用一句话给出模糊回应，不直接说对或错";
+        string text = await RequestSingleCompletionAsync(systemPrompt, userPrompt, 60, 0.4f);
+        return Normalize(text);
+    }
+
+    async Task<string> RequestSingleCompletionAsync(string systemPrompt, string userPrompt, int maxTokens, float requestTemperature)
+    {
         var reqObj = new DSRequest
         {
             model = model,
             messages = new List<Message>
-{
-    new Message { role = "system", content = curSystemPrompt },
-    new Message { role = "user", content = userPrompt }
-},
-
-            temperature = temperature,
-            max_tokens = 120,
+            {
+                new Message { role = "system", content = systemPrompt },
+                new Message { role = "user", content = userPrompt }
+            },
+            temperature = requestTemperature,
+            max_tokens = maxTokens,
             stream = false
         };
 
-        // --- 下面网络请求与你原来一致 ---
         string json = JsonUtility.ToJson(reqObj);
         if (logDebug) Debug.Log("[DeepSeek] Request:\n" + json);
 
@@ -170,33 +208,16 @@ public class CloudResponder : MonoBehaviour, IAIResponder
         if (logDebug) Debug.Log("[DeepSeek] Response:\n" + body);
 
         var resp = JsonUtility.FromJson<DSResponse>(body);
-
-        string text = resp?.choices != null && resp.choices.Length > 0
+        return resp?.choices != null && resp.choices.Length > 0
             ? resp.choices[0]?.message?.content
             : null;
-
-        text = Normalize(text);
-
-        // 无语料时不做命中 lore 校验
-        if (lore.Count > 0)
-        {
-            if (!Validate(text, lore, out string validateReason))
-                Debug.LogWarning($"[CloudResponder] Validation failed: {validateReason} text={text}");
-        }
-
-        if (!Validate(text, lore, out string reason))
-        {
-            Debug.LogWarning($"[CloudResponder] Validation failed: {reason} text={text}");
-            return text;
-        }
-
-        return text;
     }
 
     string BuildUserPrompt(AIContext ctx, List<LoreRef> lore)
     {
         var sb = new StringBuilder();
 
+        sb.AppendLine(BuildLorePromptBlock(lore));
         sb.AppendLine("【玩家刚刚说/做】");
         sb.AppendLine(string.IsNullOrEmpty(ctx.playerAction) ? "(无)" : ctx.playerAction);
 
@@ -211,6 +232,25 @@ public class CloudResponder : MonoBehaviour, IAIResponder
         sb.AppendLine("不要解释规则。");
 
         return sb.ToString();
+    }
+
+    string BuildLorePromptBlock(List<LoreRef> lore)
+    {
+        if (lore == null || lore.Count == 0)
+            return "【已解锁线索】（暂无）";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("【已解锁线索】");
+
+        for (int i = 0; i < lore.Count; i++)
+        {
+            var one = lore[i];
+            string title = string.IsNullOrWhiteSpace(one.title) ? one.id : one.title;
+            string text = !string.IsNullOrWhiteSpace(one.shortText) ? one.shortText : one.text;
+            sb.AppendLine($"- {title}：{text}");
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
 

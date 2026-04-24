@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 
 #if UNITY_EDITOR
@@ -107,6 +107,12 @@ public class MapGenerator : MonoBehaviour
 
     const float SQRT3 = 1.7320508075688772f;
 
+#if UNITY_EDITOR
+    const double EditorGenerateDebounceSeconds = 0.25d;
+    bool editorGenerateQueued;
+    double lastEditorGenerateTime;
+#endif
+
     // --------------------
     // Lifecycle
     // --------------------
@@ -122,32 +128,62 @@ public class MapGenerator : MonoBehaviour
     void OnEnable()
     {
 #if UNITY_EDITOR
-        if (!Application.isPlaying && previewInEditor && autoRegenerateInEditor)
-        {
-            EditorApplication.delayCall -= EditorDeferredGenerate;
-            EditorApplication.delayCall += EditorDeferredGenerate;
-        }
+        QueueEditorGenerate();
 #endif
     }
 
     void OnValidate()
     {
 #if UNITY_EDITOR
-        if (!Application.isPlaying && previewInEditor && autoRegenerateInEditor)
-        {
-            EditorApplication.delayCall -= EditorDeferredGenerate;
-            EditorApplication.delayCall += EditorDeferredGenerate;
-        }
+        QueueEditorGenerate();
+#endif
+    }
+
+    void OnDisable()
+    {
+#if UNITY_EDITOR
+        EditorApplication.delayCall -= EditorDeferredGenerate;
+        editorGenerateQueued = false;
 #endif
     }
 
 #if UNITY_EDITOR
+    bool ShouldAutoGenerateInEditor()
+    {
+        if (this == null || !isActiveAndEnabled) return false;
+        if (Application.isPlaying) return false;
+        if (!previewInEditor || !autoRegenerateInEditor) return false;
+        if (!gameObject.scene.IsValid() || !gameObject.scene.isLoaded) return false;
+        if (EditorApplication.isCompiling || EditorApplication.isUpdating) return false;
+        if (EditorApplication.isPlayingOrWillChangePlaymode) return false;
+        return true;
+    }
+
+    void QueueEditorGenerate()
+    {
+        if (!ShouldAutoGenerateInEditor()) return;
+        if (editorGenerateQueued) return;
+
+        editorGenerateQueued = true;
+        EditorApplication.delayCall -= EditorDeferredGenerate;
+        EditorApplication.delayCall += EditorDeferredGenerate;
+    }
+
     void EditorDeferredGenerate()
     {
-        if (this == null) return;
-        if (Application.isPlaying) return;
-        if (!previewInEditor || !autoRegenerateInEditor) return;
+        editorGenerateQueued = false;
 
+        if (this == null) return;
+        if (!ShouldAutoGenerateInEditor()) return;
+
+        double now = EditorApplication.timeSinceStartup;
+        if (now - lastEditorGenerateTime < EditorGenerateDebounceSeconds)
+        {
+            QueueEditorGenerate();
+            return;
+        }
+
+        lastEditorGenerateTime = now;
         Generate();
     }
 #endif

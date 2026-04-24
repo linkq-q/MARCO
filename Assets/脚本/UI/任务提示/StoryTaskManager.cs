@@ -41,6 +41,7 @@ public class StoryTaskManager : MonoBehaviour
 
     void Start()
     {
+        EnsureHintManager();
         RefreshUI();
     }
 
@@ -236,5 +237,14 @@ public class StoryTaskManager : MonoBehaviour
     {
         if (taskUI != null)
             taskUI.Apply(stage, taskIndex);
+    }
+
+    void EnsureHintManager()
+    {
+        if (UIHintManager.I != null) return;
+
+        var go = new GameObject("UIHintManager");
+        var mgr = go.AddComponent<UIHintManager>();
+        mgr.storyTaskManager = this;
     }
 }

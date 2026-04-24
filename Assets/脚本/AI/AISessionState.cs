@@ -4,26 +4,45 @@ using UnityEngine;
 
 public class AISessionState : MonoBehaviour
 {
+    public enum AddSavedResult
+    {
+        Success,
+        Duplicate,
+        Full,
+        Invalid
+    }
+
+    [Serializable]
+    public class RecentTurn
+    {
+        public string speaker;
+        [TextArea(1, 4)] public string text;
+    }
+
     public static AISessionState I { get; private set; }
 
     [Header("Core Memory")]
     [TextArea(2, 6)]
-    public string playerLastInput;      // ¡¾PlayerLastInput¡¿
+    public string playerLastInput;
     [TextArea(2, 6)]
-    public string aiRecentMemory;       // ¡¾AIRecentMemory¡¿
+    public string aiRecentMemory;
 
     [Header("SAN")]
     [Range(0, 100)]
-    public int san = 85;                // ¡¾UserState¡¿Ä¬ÈÏ san
+    public int san = 85;
     public int sanMin = 0;
     public int sanMax = 100;
 
     [Header("Init / Default State")]
     [TextArea(2, 6)]
-    public string defaultIntro = "³ÂÄ©ËÕĞÑÁË¡£ÄãĞèÒªÏÈ¸øËû½âÊÍµ±Ç°µÄ×´¿ö£¬ÒÔ¼°ÄãÊÇÊ²Ã´¡£";
+    public string defaultIntro = "é™ˆæœ«è‹é†’äº†ã€‚ä½ éœ€è¦å…ˆç»™ä»–è§£é‡Šå½“å‰çš„çŠ¶å†µï¼Œä»¥åŠä½ æ˜¯ä»€ä¹ˆã€‚";
 
     [Header("Saved Evidence (Player Pinned)")]
+    public int savedLimit = 6;
     public List<EvidenceRef> saved = new List<EvidenceRef>();
+
+    [Header("Recent Turns")]
+    public List<RecentTurn> recentTurns = new List<RecentTurn>();
 
     void Awake()
     {
@@ -31,9 +50,8 @@ public class AISessionState : MonoBehaviour
         I = this;
         DontDestroyOnLoad(gameObject);
 
-        // ³õÊ¼Ä¬ÈÏ
         if (string.IsNullOrWhiteSpace(playerLastInput))
-            playerLastInput = "£¨³ÁÄ¬£©";
+            playerLastInput = "ï¼ˆæ²‰é»˜ï¼‰";
 
         if (string.IsNullOrWhiteSpace(aiRecentMemory))
             aiRecentMemory = defaultIntro;
@@ -41,12 +59,18 @@ public class AISessionState : MonoBehaviour
 
     public void SetPlayerInput(string txt)
     {
-        playerLastInput = string.IsNullOrWhiteSpace(txt) ? "£¨³ÁÄ¬£©" : txt.Trim();
+        string normalized = string.IsNullOrWhiteSpace(txt) ? "ï¼ˆæ²‰é»˜ï¼‰" : txt.Trim();
+        playerLastInput = normalized;
+        AddRecentTurn("ç©å®¶", normalized);
     }
 
     public void SetAIReply(string txt)
     {
-        aiRecentMemory = string.IsNullOrWhiteSpace(txt) ? aiRecentMemory : txt.Trim();
+        if (string.IsNullOrWhiteSpace(txt)) return;
+
+        string normalized = txt.Trim();
+        aiRecentMemory = normalized;
+        AddRecentTurn("Echo", normalized);
     }
 
     public void AddSan(int delta)
@@ -54,23 +78,44 @@ public class AISessionState : MonoBehaviour
         san = Mathf.Clamp(san + delta, sanMin, sanMax);
     }
 
-    public void AddSaved(EvidenceRef ev)
+    public AddSavedResult AddSaved(EvidenceRef ev)
     {
-        if (ev == null) return;
-        if (string.IsNullOrWhiteSpace(ev.text)) return;
+        if (ev == null) return AddSavedResult.Invalid;
+        if (string.IsNullOrWhiteSpace(ev.text)) return AddSavedResult.Invalid;
 
-        // È¥ÖØ£ºÍ¬ÎÄ±¾¾Í²»ÖØ¸´´æ£¨ÄãÒ²¿ÉÒÔ¸Ä³É°´ id£©
-        if (saved.Exists(x => x != null && x.text == ev.text)) return;
+        ev.text = ev.text.Trim();
+
+        if (saved.Exists(x => x != null && x.text == ev.text)) return AddSavedResult.Duplicate;
+        if (saved.Count >= Mathf.Max(1, savedLimit)) return AddSavedResult.Full;
+
+        if (string.IsNullOrEmpty(ev.id))
+            ev.id = Guid.NewGuid().ToString("N");
+        if (ev.unixMs <= 0)
+            ev.unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         saved.Add(ev);
+        return AddSavedResult.Success;
+    }
+
+    public bool RemoveSavedAt(int index)
+    {
+        if (saved == null) return false;
+        if (index < 0 || index >= saved.Count) return false;
+
+        saved.RemoveAt(index);
+        return true;
+    }
+
+    public int GetSavedRemainingSlots()
+    {
+        return Mathf.Max(0, Mathf.Max(1, savedLimit) - (saved?.Count ?? 0));
     }
 
     public string BuildSavedBlock(int max = 6)
     {
-        if (saved == null || saved.Count == 0) return "£¨ÎŞ£©";
+        if (saved == null || saved.Count == 0) return "ï¼ˆæ— ï¼‰";
         int n = Mathf.Clamp(max, 1, 30);
 
-        // ×î½üµÄÓÅÏÈ
         int start = Mathf.Max(0, saved.Count - n);
         var lines = new List<string>();
         for (int i = saved.Count - 1; i >= start; i--)
@@ -79,7 +124,44 @@ public class AISessionState : MonoBehaviour
             if (s == null) continue;
             lines.Add("- " + s.text);
         }
+
         lines.Reverse();
         return string.Join("\n", lines);
+    }
+
+    public string BuildRecentTurnsBlock()
+    {
+        if (recentTurns == null || recentTurns.Count == 0) return "ï¼ˆæ— ï¼‰";
+
+        var lines = new List<string>(recentTurns.Count + 1)
+        {
+            "ã€è¿‘æœŸå¯¹è¯è®°å½•ã€‘"
+        };
+
+        for (int i = 0; i < recentTurns.Count; i++)
+        {
+            var turn = recentTurns[i];
+            if (turn == null || string.IsNullOrWhiteSpace(turn.text)) continue;
+
+            string speaker = string.IsNullOrWhiteSpace(turn.speaker) ? "æœªçŸ¥" : turn.speaker.Trim();
+            lines.Add($"{speaker}ï¼š{turn.text.Trim()}");
+        }
+
+        return lines.Count > 1 ? string.Join("\n", lines) : "ï¼ˆæ— ï¼‰";
+    }
+
+    void AddRecentTurn(string speaker, string text)
+    {
+        if (recentTurns == null)
+            recentTurns = new List<RecentTurn>();
+
+        recentTurns.Add(new RecentTurn
+        {
+            speaker = speaker,
+            text = text
+        });
+
+        while (recentTurns.Count > 6)
+            recentTurns.RemoveAt(0);
     }
 }

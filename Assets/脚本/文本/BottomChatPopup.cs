@@ -20,6 +20,7 @@ public class BottomChatPopup : MonoBehaviour
     [Header("Hotkeys")]
     public KeyCode openKey = KeyCode.LeftShift;
     public KeyCode closeKey = KeyCode.Escape;
+    public KeyCode pinLastPlayerInputKey = KeyCode.R;
     public bool shiftIsToggle = true;
 
     [Header("Timing")]
@@ -51,6 +52,7 @@ public class BottomChatPopup : MonoBehaviour
     Coroutine aiDelayCo;
 
     bool endingLocked;
+    FirstPersonControllerSimple _firstPerson;
 
 
     void Awake()
@@ -58,6 +60,8 @@ public class BottomChatPopup : MonoBehaviour
         // 初始：全部隐藏
         SetAllRoots(false, false, false);
         SetVisibleInstant(false);
+
+        _firstPerson = FindFirstObjectByType<FirstPersonControllerSimple>();
 
         if (aiText) aiText.text = "";
         if (playerText) playerText.text = "";
@@ -79,6 +83,8 @@ public class BottomChatPopup : MonoBehaviour
             StopCoroutine(_bindCo);
             _bindCo = null;
         }
+
+        SetPlayerMovementLock(false);
 
         if (pauseAutoTalkWhileTyping && AIBroker.Instance != null)
             AIBroker.Instance.SetAutoTalkPaused(false);
@@ -127,6 +133,9 @@ public class BottomChatPopup : MonoBehaviour
 
         if (state == State.InputMode && Input.GetKeyDown(closeKey))
             CloseInput();
+
+        if (state != State.InputMode && Input.GetKeyDown(pinLastPlayerInputKey))
+            TryPinLatestPlayerInput();
     }
 
     // ======= 对外：显示AI =======
@@ -180,6 +189,7 @@ public class BottomChatPopup : MonoBehaviour
         StopHideAndFade();
 
         state = State.InputMode;
+        SetPlayerMovementLock(true);
 
         SetVisibleInstant(true);
         SetAllRoots(ai: false, player: false, input: true);
@@ -220,6 +230,8 @@ public class BottomChatPopup : MonoBehaviour
     {
         if (inputField)
             inputField.onSubmit.RemoveListener(OnSubmit);
+
+        SetPlayerMovementLock(false);
 
         if (pauseAutoTalkWhileTyping && AIBroker.Instance != null)
             AIBroker.Instance.SetAutoTalkPaused(false);
@@ -449,6 +461,8 @@ public class BottomChatPopup : MonoBehaviour
         if (pauseAutoTalkWhileTyping && AIBroker.Instance != null)
             AIBroker.Instance.SetAutoTalkPaused(false);
 
+        SetPlayerMovementLock(false);
+
         // 关闭输入监听
         if (inputField)
         {
@@ -464,9 +478,58 @@ public class BottomChatPopup : MonoBehaviour
         SetVisibleInstant(false);
     }
 
+    void SetPlayerMovementLock(bool locked)
+    {
+        if (!_firstPerson)
+            _firstPerson = FindFirstObjectByType<FirstPersonControllerSimple>();
+
+        if (_firstPerson)
+            _firstPerson.SetChatInputLock(locked);
+    }
+
     public void OnEndingUnlock()
     {
         endingLocked = false;
     }
 
+    void TryPinLatestPlayerInput()
+    {
+        if (AISessionState.I == null)
+        {
+            ToastSpawner.Instance?.Show("当前没有可钉住的记录");
+            return;
+        }
+
+        string content = AISessionState.I.playerLastInput;
+        if (string.IsNullOrWhiteSpace(content) || content == "（沉默）")
+        {
+            ToastSpawner.Instance?.Show("当前没有可钉住的玩家发言");
+            return;
+        }
+
+        var result = AISessionState.I.AddSaved(new EvidenceRef
+        {
+            text = content,
+            type = EvidenceType.Lore,
+            scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name
+        });
+
+        switch (result)
+        {
+            case AISessionState.AddSavedResult.Success:
+                ToastSpawner.Instance?.Show("钉住成功");
+                break;
+            case AISessionState.AddSavedResult.Duplicate:
+                ToastSpawner.Instance?.Show("内容重复");
+                break;
+            case AISessionState.AddSavedResult.Full:
+                ToastSpawner.Instance?.Show("已满（请先删除）");
+                break;
+            default:
+                ToastSpawner.Instance?.Show("钉住失败");
+                break;
+        }
+    }
+
 }
+
