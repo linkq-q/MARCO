@@ -654,24 +654,40 @@ public class AIBroker : MonoBehaviour
 
     void TryTriggerLinkByKeyword(string echoLine)
     {
-        if (!triggerStage2LinkByReplyKeywords) return;
-        if (linkBridge == null) return;
+        if (!triggerStage2LinkByReplyKeywords)
+        {
+            Debug.Log("[LinkKeyword] skip: triggerStage2LinkByReplyKeywords=false");
+            return;
+        }
+        if (linkBridge == null)
+        {
+            Debug.LogWarning("[LinkKeyword] skip: linkBridge is NULL (请在Inspector拖入Stage2LinkModeBridge)");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(echoLine)) return;
 
         var rs = EchoRunState.I;
         EchoStage curStage = rs != null ? rs.stage : stage;
         int curSub = rs != null ? rs.subState : subState;
 
-        if (curStage != EchoStage.Stage2_Rift || curSub != 2) return;
+        Debug.Log($"[LinkKeyword] check stage={curStage} sub={curSub} (need Stage2_Rift/sub=2)");
+
+        if (curStage != EchoStage.Stage2_Rift || curSub != 2)
+        {
+            Debug.Log($"[LinkKeyword] skip: stage/sub mismatch (cur={curStage}/{curSub})");
+            return;
+        }
 
         foreach (var kw in stage2LinkKeywords)
         {
             if (!string.IsNullOrWhiteSpace(kw) && echoLine.Contains(kw))
             {
+                Debug.Log($"[LinkKeyword] HIT keyword='{kw}' -> TryTriggerNextScenarioFromDialogue");
                 linkBridge.TryTriggerNextScenarioFromDialogue();
                 return;
             }
         }
+        Debug.Log("[LinkKeyword] no keyword hit in reply");
     }
 
     public string GetLastAI() => _lastAILine;

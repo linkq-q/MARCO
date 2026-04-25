@@ -107,16 +107,8 @@ public class InventoryUIController : MonoBehaviour
             return;
         }
 
-        EnsureGuessResponseText();
-
         root.SetActive(false);
         isOpen = false;
-
-        if (guessResponseText)
-        {
-            guessResponseText.text = "";
-            guessResponseText.gameObject.SetActive(false);
-        }
 
         if (exitButton) exitButton.onClick.AddListener(Close);
         if (guessInput) guessInput.onEndEdit.AddListener(OnGuessSubmitted);
@@ -326,9 +318,6 @@ void RefreshRightPanel(InventoryManager.ItemRuntime rt)
                 guessInput.SetTextWithoutNotify("");            // 可选：顺便清空
             }
 
-            RefreshGuessResponse(null);
-
-
             // ✅ 关键：日记强制设置key
             if (readStayTracker) readStayTracker.contextKey = "diary_main";
 
@@ -362,8 +351,6 @@ void RefreshRightPanel(InventoryManager.ItemRuntime rt)
                 guessInput.gameObject.SetActive(false);
                 guessInput.SetTextWithoutNotify("");
             }
-
-            RefreshGuessResponse(null);
 
             // ✅ 显示内容：优先预制体，其次文本
             if (memoryShardUI != null)
@@ -407,8 +394,6 @@ void RefreshRightPanel(InventoryManager.ItemRuntime rt)
             guessInput.gameObject.SetActive(!hasAnswer);
             guessInput.SetTextWithoutNotify(""); // 你要提交后必隐藏，所以这里别回填
         }
-
-        RefreshGuessResponse(rt);
 
         if (panelLogs) panelLogs.SetActive(true);
 
@@ -690,36 +675,13 @@ void RefreshRightPanel(InventoryManager.ItemRuntime rt)
         }
     }
 
-    void RefreshGuessResponse(InventoryManager.ItemRuntime rt)
-    {
-        EnsureGuessResponseText();
-        if (guessResponseText == null) return;
-
-        bool show = rt != null &&
-                    rt.data != null &&
-                    rt.data.kind == ItemKind.Normal &&
-                    !string.IsNullOrWhiteSpace(rt.guessFeedback);
-
-        guessResponseText.gameObject.SetActive(show);
-        guessResponseText.text = show ? rt.guessFeedback : "";
-    }
-
     async void RequestGuessFeedback(InventoryManager.ItemRuntime rt, string answer)
     {
         if (rt == null || rt.data == null) return;
 
         int serial = ++_guessFeedbackSerial;
 
-        EnsureGuessResponseText();
-
-        if (guessResponseText != null)
-        {
-            guessResponseText.gameObject.SetActive(true);
-            guessResponseText.text = guessResponseLoadingText;
-        }
-
         string feedback = null;
-
         try
         {
             if (AIBroker.Instance != null)
@@ -736,35 +698,7 @@ void RefreshRightPanel(InventoryManager.ItemRuntime rt)
             ? guessResponseFallbackText
             : feedback.Trim();
 
-        if (InventoryManager.Instance != null && InventoryManager.Instance.Selected == rt)
-            RefreshGuessResponse(rt);
-
         AIBroker.Instance?.PlayTtsLine(rt.guessFeedback, "neutral");
-    }
-
-    void EnsureGuessResponseText()
-    {
-        if (guessResponseText != null || guessInput == null) return;
-
-        var parent = guessInput.transform.parent;
-        if (parent == null) return;
-
-        var go = new GameObject("GuessResponseText", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
-        go.transform.SetParent(parent, false);
-
-        var rect = go.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0f, 0.5f);
-        rect.anchorMax = new Vector2(1f, 0.5f);
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.anchoredPosition = new Vector2(0f, -90f);
-        rect.sizeDelta = new Vector2(0f, 80f);
-
-        guessResponseText = go.GetComponent<TextMeshProUGUI>();
-        guessResponseText.fontSize = 24f;
-        guessResponseText.enableWordWrapping = true;
-        guessResponseText.alignment = TextAlignmentOptions.TopLeft;
-        guessResponseText.color = Color.white;
-        guessResponseText.gameObject.SetActive(false);
     }
 
     public bool IsGuessCorrect(string itemId, string answer)
