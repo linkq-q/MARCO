@@ -668,29 +668,35 @@ public class AIBroker : MonoBehaviour
             return;
         }
         if (string.IsNullOrWhiteSpace(echoLine)) return;
-
         var rs = EchoRunState.I;
         EchoStage curStage = rs != null ? rs.stage : stage;
         int curSub = rs != null ? rs.subState : subState;
-
         Debug.Log($"[LinkKeyword] check stage={curStage} sub={curSub} (need Stage2_Rift/sub=2)");
-
         if (curStage != EchoStage.Stage2_Rift || curSub != 2)
         {
             Debug.Log($"[LinkKeyword] skip: stage/sub mismatch (cur={curStage}/{curSub})");
             return;
         }
-
         foreach (var kw in stage2LinkKeywords)
         {
             if (!string.IsNullOrWhiteSpace(kw) && echoLine.Contains(kw))
             {
-                Debug.Log($"[LinkKeyword] HIT keyword='{kw}' -> TryTriggerNextScenarioFromDialogue");
-                linkBridge.TryTriggerNextScenarioFromDialogue();
+                Debug.Log($"[LinkKeyword] HIT keyword='{kw}' -> TryTriggerNextScenarioFromDialogue (delay 1.5s)");
+                StartCoroutine(TriggerLinkWithDelay(1.5f));
                 return;
             }
         }
         Debug.Log("[LinkKeyword] no keyword hit in reply");
+    }
+
+    IEnumerator TriggerLinkWithDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (linkBridge != null)
+        {
+            Debug.Log("[LinkKeyword] delay elapsed -> TryTriggerNextScenarioFromDialogue");
+            linkBridge.TryTriggerNextScenarioFromDialogue();
+        }
     }
 
     public string GetLastAI() => _lastAILine;

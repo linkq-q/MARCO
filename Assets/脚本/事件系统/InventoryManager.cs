@@ -50,7 +50,7 @@ public class InventoryManager : MonoBehaviour
 
     void Awake()
     {
-        // 中文注释：单例
+        // 单例
         if (Instance != null) { Destroy(gameObject); return; }
         Instance = this;
         DontDestroyOnLoad(gameObject);
@@ -73,7 +73,7 @@ public class InventoryManager : MonoBehaviour
         if (data == null) return;
         if (string.IsNullOrWhiteSpace(data.id)) return;
 
-        // 中文注释：已有就不重复入库
+        // 已有就不重复入库
         if (HasItem(data.id)) return;
 
         // ✅ 原 takenOut=false 改为 guessEnabled=false（默认不打开填空）
@@ -81,13 +81,15 @@ public class InventoryManager : MonoBehaviour
         owned.Add(rt);
 
         if (debugLog) Debug.Log($"[Inventory] AddItem: {data.id}");
+        UIHintManager.I?.NotifyFirstHighlightEntered();
 
         UnlockLoreForItem(data);
 
-        // 中文注释：入库后默认选中新道具
+        // 入库后默认选中新道具
         SelectItem(rt);
 
-        // 中文注释：通知 UI 重建/刷新左侧列表
+
+        // 通知 UI 重建/刷新左侧列表
         OnInventoryChanged?.Invoke();
     }
 
@@ -117,14 +119,14 @@ public class InventoryManager : MonoBehaviour
     {
         if (selected == null || selected.data == null) return;
 
-        // 中文注释：如果该道具不允许交互/推测，则强制为 false
+        // 如果该道具不允许交互/推测，则强制为 false
         if (!selected.data.isInteractable) value = false;
 
         selected.guessEnabled = value;
 
         if (debugLog) Debug.Log($"[Inventory] SetGuessEnabled: {selected.data.id} -> {value}");
 
-        // 中文注释：状态改变，左侧/右侧都需要刷新
+        // 状态改变，左侧/右侧都需要刷新
         OnInventoryChanged?.Invoke();
         OnSelectedChanged?.Invoke(selected);
     }

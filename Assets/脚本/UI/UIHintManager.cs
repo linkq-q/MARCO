@@ -25,6 +25,7 @@ public class UIHintManager : MonoBehaviour
     Coroutine _coTAB, _coInteract, _coSpace;
 
     bool _firstDialogueOccurred;
+    bool _spaceHintDismissed;
 
     void Awake()
     {
@@ -50,8 +51,7 @@ public class UIHintManager : MonoBehaviour
     void Update()
     {
         TryDismiss(hintGroup_TAB, ref _coTAB, KeyCode.Tab);
-        TryDismiss(hintGroup_Interact, ref _coInteract, KeyCode.E);
-        TryDismiss(hintGroup_Space, ref _coSpace, KeyCode.Space);
+        TryDismissSpace();
     }
 
     // ========================
@@ -65,8 +65,8 @@ public class UIHintManager : MonoBehaviour
 
     public void NotifyFirstHighlightEntered()
     {
-        if (!_firstDialogueOccurred) return;
-        ShowInteractOnce("highlight_interact", 0f);
+        if (_coInteract != null) StopCoroutine(_coInteract);
+        _coInteract = StartCoroutine(CoFadeOut(hintGroup_Interact));
     }
 
     public void HideHint()
@@ -76,7 +76,6 @@ public class UIHintManager : MonoBehaviour
         StartFadeOut(hintGroup_Space, ref _coSpace);
     }
 
-    // 向下兼容旧签名（text 参数已忽略，由 id 决定显示哪个 GO）
     public void ShowHint(string text, KeyCode dismissKey, float delay = 0f)
     {
         ShowInteractOnce("hint_generic_" + text.GetHashCode(), delay);
@@ -91,7 +90,7 @@ public class UIHintManager : MonoBehaviour
         else if (id == "wake_dialogue")
             ShowSpaceOnce(id, delay);
         else
-            ShowInteractOnce(id, delay); // 自定义 id 默认路由到 Interact 提示
+            ShowInteractOnce(id, delay);
     }
 
     // ========================
@@ -123,6 +122,27 @@ public class UIHintManager : MonoBehaviour
         if (_shownIds.Contains(id)) return;
         _shownIds.Add(id);
         StartFadeIn(hintGroup_Space, ref _coSpace, delay);
+    }
+
+    // ========================
+    // 内部：Space提示消失后延迟开放Interact权限
+    // ========================
+
+    void TryDismissSpace()
+    {
+        if (hintGroup_Space == null || !(hintGroup_Space.alpha > 0.01f)) return;
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            StartFadeOut(hintGroup_Space, ref _coSpace);
+            StartCoroutine(EnableInteractAfterDelay(1f));
+        }
+    }
+
+    IEnumerator EnableInteractAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        _spaceHintDismissed = true;
+        ShowInteractOnce("highlight_interact", 0f);
     }
 
     // ========================
