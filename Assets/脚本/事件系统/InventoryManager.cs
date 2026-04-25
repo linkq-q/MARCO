@@ -39,6 +39,9 @@ public class InventoryManager : MonoBehaviour
     readonly List<LoreRef> unlockedLoreRefs = new List<LoreRef>();
     readonly HashSet<string> unlockedLoreIds = new HashSet<string>();
 
+    readonly List<LoreRef> _injectableLoreRefs = new List<LoreRef>();
+    readonly HashSet<string> _injectableLoreIds = new HashSet<string>();
+
     [Header("Debug（可选）")]
     public bool debugLog = false;
 
@@ -216,20 +219,47 @@ public class InventoryManager : MonoBehaviour
         return unlockedLoreRefs;
     }
 
+    public IReadOnlyList<LoreRef> GetInjectableLoreRefs()
+    {
+        return _injectableLoreRefs;
+    }
+
     void UnlockLoreForItem(ItemData data)
     {
         if (data == null) return;
+
+        bool shouldInject = loreUnlockDatabase == null || loreUnlockDatabase.ShouldInjectToEcho(data);
 
         bool addedAny = false;
         var refs = loreUnlockDatabase != null ? loreUnlockDatabase.GetLoreRefs(data) : null;
         if (refs != null)
         {
             for (int i = 0; i < refs.Count; i++)
-                addedAny |= AddUnlockedLore(refs[i]);
+            {
+                if (AddUnlockedLore(refs[i]))
+                {
+                    addedAny = true;
+                    if (shouldInject)
+                        AddInjectableLore(unlockedLoreRefs[unlockedLoreRefs.Count - 1]);
+                }
+            }
         }
 
         if (!addedAny)
-            AddUnlockedLore(BuildFallbackLoreRef(data));
+        {
+            var fallback = BuildFallbackLoreRef(data);
+            if (AddUnlockedLore(fallback) && shouldInject)
+                AddInjectableLore(unlockedLoreRefs[unlockedLoreRefs.Count - 1]);
+        }
+    }
+
+    bool AddInjectableLore(LoreRef lore)
+    {
+        if (string.IsNullOrWhiteSpace(lore.id)) return false;
+        if (_injectableLoreIds.Contains(lore.id)) return false;
+        _injectableLoreIds.Add(lore.id);
+        _injectableLoreRefs.Add(lore);
+        return true;
     }
 
     bool AddUnlockedLore(LoreRef lore)

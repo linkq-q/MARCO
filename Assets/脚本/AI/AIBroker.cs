@@ -339,7 +339,7 @@ public class AIBroker : MonoBehaviour
         ctx.subState = Mathf.Max(1, sub);
 
         if (InventoryManager.Instance != null)
-            ctx.loreRefs = new List<LoreRef>(InventoryManager.Instance.GetUnlockedLoreRefs());
+            ctx.loreRefs = new List<LoreRef>(InventoryManager.Instance.GetInjectableLoreRefs());
         else if (PlayerLoreState.Instance != null)
             ctx.loreRefs = new List<LoreRef>(PlayerLoreState.Instance.GetAllLore());
         else
@@ -459,6 +459,9 @@ public class AIBroker : MonoBehaviour
             _lastAILine = line;
             bottomChat.ShowAI(line);
             storyTaskManager?.RegisterAIDialogue(line);
+
+            if (!isAutoTalk)
+                UIHintManager.I?.SetFirstDialogueOccurred();
 
             // ✅ Stage2-S2：Echo回复含关键词时触发连线面板
             TryTriggerLinkByKeyword(line);

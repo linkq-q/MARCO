@@ -13,7 +13,7 @@ public class AwakeningSystem : MonoBehaviour
     [Header("Peers (UI only)")]
     public float peer03 = 85f;
     public float peer07 = 85f;
-    public float peerRate = 0.02f;
+    public float peerRate = 0.015f;
 
     [Header("Debug")]
     public bool logDebug = false;
