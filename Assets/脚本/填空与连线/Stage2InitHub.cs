@@ -39,6 +39,9 @@ public class Stage2InitHub : MonoBehaviour
         if (_inited) return;
         _inited = true;
 
+        // 同步推进任务5->6
+        FindFirstObjectByType<StoryTaskManager>()?.NotifyEnterStage2();
+
         // 1) 启用系统（如果你希望 Stage1 不跑，就在 Awake/Start 里先禁用它们）
         if (takeoverSystem) takeoverSystem.enabled = true;
         if (awakeningSystem) awakeningSystem.enabled = true;

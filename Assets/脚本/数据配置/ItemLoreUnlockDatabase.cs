@@ -10,6 +10,8 @@ public class ItemLoreUnlockDatabase : ScriptableObject
     {
         public ItemData item;
         public List<LoreRef> loreRefs = new List<LoreRef>();
+        [Tooltip("是否将该道具的语料注入给Echo。日记/便签/记忆碎片类型设为false。")]
+        public bool injectToEcho = true;
     }
 
     public List<ItemLoreEntry> entries = new List<ItemLoreEntry>();
@@ -29,5 +31,17 @@ public class ItemLoreUnlockDatabase : ScriptableObject
         }
 
         return result;
+    }
+
+    public bool ShouldInjectToEcho(ItemData item)
+    {
+        if (item == null || entries == null) return true;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var entry = entries[i];
+            if (entry == null || entry.item != item) continue;
+            return entry.injectToEcho;
+        }
+        return true;
     }
 }

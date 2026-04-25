@@ -24,6 +24,8 @@ public class UIHintManager : MonoBehaviour
     readonly HashSet<string> _shownIds = new HashSet<string>();
     Coroutine _coTAB, _coInteract, _coSpace;
 
+    bool _firstDialogueOccurred;
+
     void Awake()
     {
         if (I != null && I != this) { Destroy(gameObject); return; }
@@ -56,8 +58,14 @@ public class UIHintManager : MonoBehaviour
     // 外部调用接口
     // ========================
 
+    public void SetFirstDialogueOccurred()
+    {
+        _firstDialogueOccurred = true;
+    }
+
     public void NotifyFirstHighlightEntered()
     {
+        if (!_firstDialogueOccurred) return;
         ShowInteractOnce("highlight_interact", 0f);
     }
 
