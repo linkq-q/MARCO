@@ -139,9 +139,44 @@ public class DoubaoTtsHttpClient : MonoBehaviour
             return;
         }
 
+        text = ProcessTextForTTS(text); // 将阿拉伯数字转为中文，避免TTS拆开朗读
+
         StopCurrentSpeak();
         _speakSerial++;
         _speakCo = StartCoroutine(CoSpeak(text, emotion, _speakSerial));
+    }
+
+    private string ProcessTextForTTS(string text)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(text, @"\d+", match =>
+        {
+            if (long.TryParse(match.Value, out long num))
+                return NumberToChinese(num);
+            return match.Value;
+        });
+    }
+
+    private string NumberToChinese(long num)
+    {
+        if (num == 0) return "零";
+
+        string[] units  = { "", "十", "百", "千", "万", "十万", "百万", "千万", "亿" };
+        string[] digits = { "零", "一", "二", "三", "四", "五", "六", "七", "八", "九" };
+
+        string numStr = num.ToString();
+        int    len    = numStr.Length;
+        string result = "";
+
+        for (int i = 0; i < len; i++)
+        {
+            int d         = numStr[i] - '0';
+            int unitIndex = len - i - 1;
+            if (d != 0)
+                result += digits[d] + units[unitIndex];
+            else if (result.Length > 0 && !result.EndsWith("零"))
+                result += "零";
+        }
+        return result.TrimEnd('零');
     }
 
     void StopCurrentSpeak()

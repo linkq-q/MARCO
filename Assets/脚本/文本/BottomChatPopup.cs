@@ -53,6 +53,9 @@ public class BottomChatPopup : MonoBehaviour
 
     bool endingLocked;
     FirstPersonControllerSimple _firstPerson;
+    Coroutine _activateInputCo;
+
+    public bool IsInInputMode => state == State.InputMode;
 
 
     void Awake()
@@ -188,6 +191,8 @@ public class BottomChatPopup : MonoBehaviour
     {
         StopHideAndFade();
 
+        if (_activateInputCo != null) { StopCoroutine(_activateInputCo); _activateInputCo = null; }
+
         state = State.InputMode;
         SetPlayerMovementLock(true);
 
@@ -216,9 +221,8 @@ public class BottomChatPopup : MonoBehaviour
             inputField.enabled = true;
             inputField.gameObject.SetActive(true);
 
-            EventSystem.current?.SetSelectedGameObject(inputField.gameObject);
-            inputField.Select();
-            inputField.ActivateInputField();
+            // 延一帧再激活：避免TMP在SetActive同帧内ActivateInputField导致字符不渲染
+            _activateInputCo = StartCoroutine(ActivateInputNextFrame());
         }
         else
         {
@@ -226,8 +230,22 @@ public class BottomChatPopup : MonoBehaviour
         }
     }
 
+    IEnumerator ActivateInputNextFrame()
+    {
+        yield return null;
+        if (state != State.InputMode || !inputField) { _activateInputCo = null; yield break; }
+
+        EventSystem.current?.SetSelectedGameObject(inputField.gameObject);
+        inputField.Select();
+        inputField.ActivateInputField();
+        Canvas.ForceUpdateCanvases();
+        _activateInputCo = null;
+    }
+
     void CloseInput()
     {
+        if (_activateInputCo != null) { StopCoroutine(_activateInputCo); _activateInputCo = null; }
+
         if (inputField)
             inputField.onSubmit.RemoveListener(OnSubmit);
 
@@ -449,6 +467,7 @@ public class BottomChatPopup : MonoBehaviour
         if (fadeCo != null) { StopCoroutine(fadeCo); fadeCo = null; }
         if (aiDelayCo != null) { StopCoroutine(aiDelayCo); aiDelayCo = null; }
         if (_bindCo != null) { StopCoroutine(_bindCo); _bindCo = null; }
+        if (_activateInputCo != null) { StopCoroutine(_activateInputCo); _activateInputCo = null; }
 
         // 解绑提交（防止结局仍能发消息）
         if (_boundToBroker && AIBroker.Instance != null)

@@ -65,7 +65,7 @@ public class FirstPersonControllerSimple : MonoBehaviour, IEndingLockable
     void Update()
     {
         if (endingLocked || _chatInputLocked) return;
-        // （可选）保留你原来的调试逻辑，但加一个门：UI打开时禁止它乱改锁定状态
+        if (PauseManager.IsPaused) return; // 暂停时跳过所有输入
         if (allowCursorToggle)
         {
             if (Input.GetKeyDown(KeyCode.Escape)) SetCursorLock(false);
@@ -111,22 +111,11 @@ public class FirstPersonControllerSimple : MonoBehaviour, IEndingLockable
 
     void Move()
     {
-        float h = Input.GetAxisRaw("Horizontal"); // A/D
-        float v = Input.GetAxisRaw("Vertical");   // W/S
-
-        if (invertMoveX) h = -h;
-        if (invertMoveY) v = -v;
-
-        Vector3 move = (transform.right * h + transform.forward * v).normalized;
-
-        float spd = moveSpeed;
-        if (allowSprint && Input.GetKey(KeyCode.LeftShift)) spd *= sprintMul;
-
-        // 重力
+        // WASD 移动已永久禁用，仅保留重力
         if (cc.isGrounded && verticalVel < 0f) verticalVel = -2f; // 贴地
         verticalVel += gravity * Time.deltaTime;
 
-        Vector3 vel = move * spd;
+        Vector3 vel = Vector3.zero;
         vel.y = verticalVel;
 
         cc.Move(vel * Time.deltaTime);
